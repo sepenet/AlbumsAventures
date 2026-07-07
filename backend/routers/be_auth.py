@@ -1,8 +1,6 @@
 import logging
 import secrets
 import string
-import time
-from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
@@ -21,8 +19,9 @@ router = APIRouter(prefix="/be_auth", tags=["backend_auth"])
 
 import hashlib
 
-from utils.config import auth_config, password_reset, rate_limiting
+from utils.config import app_config, auth_config, password_reset, rate_limiting
 from utils.email import send_password_reset_email
+from utils.rate_limit import check_rate_limit, clear_failed_attempts, record_failed_attempt
 
 from ..db import crud
 from ..db.db_connect import db_dependency
@@ -31,6 +30,15 @@ from ..db.db_connect import db_dependency
 SECRET_KEY = auth_config.secret_key
 ALGORITHM = auth_config.algorithm
 ACCESS_TOKEN_EXPIRE_MINUTES = auth_config.access_token_expire_minutes
+
+# SEC : confinement strict de l'algorithme JWT. On n'autorise QUE HS256 au décodage,
+# ce qui rejette explicitement `alg: none` et toute confusion d'algorithme (ex. RS256).
+# La signature et l'expiration (`exp`) sont vérifiées et exigées sur TOUS les chemins.
+JWT_ALLOWED_ALGORITHMS = ["HS256"]
+# Le token est toujours SIGNÉ avec HS256, indépendamment de la config (défensif).
+JWT_SIGNING_ALGORITHM = "HS256"
+if ALGORITHM not in JWT_ALLOWED_ALGORITHMS:
+    logger.warning(f"JWT_ALGORITHM={ALGORITHM!r} non autorisé — forçage HS256 pour signature et vérification")
 
 # le bearar token se recupère dans le header de la requête et il est utilisé pour l'authentification
 # pour le réucpérer on navigue /photos.marlenagui.com/token
@@ -42,9 +50,30 @@ pwd_context = CryptContext(schemes=["scrypt"], deprecated="auto")
 # Nom du cookie utilisé pour stocker le token JWT
 COOKIE_NAME = auth_config.cookie_name
 
-# Cache en mémoire pour stocker les tentatives échouées
-# Structure: {token_hash: {"attempts": count, "first_attempt": timestamp, "blocked_until": timestamp}}
-failed_attempts_cache = defaultdict(dict)
+
+def decode_token(token: str, *, expected_type: str | None = None) -> dict:
+    """Décode et vérifie un JWT avec un durcissement strict (SEC).
+
+    - ``algorithms`` épinglé à ``["HS256"]`` : rejette ``alg: none`` et toute
+      confusion d'algorithme.
+    - signature et expiration (``exp``) vérifiées ET exigées.
+    - fonctionne pour tous les chemins (cookie ET header Authorization).
+
+    :param token: le JWT à vérifier
+    :param expected_type: si fourni, exige que la claim ``type`` corresponde
+    :return: le payload décodé
+    :raises JWTError: si le token est invalide, non signé, expiré, ou du mauvais type
+    """
+    payload = jwt.decode(
+        token,
+        SECRET_KEY,
+        algorithms=JWT_ALLOWED_ALGORITHMS,
+        options={"require_exp": True, "verify_exp": True, "verify_signature": True},
+    )
+    if expected_type is not None and payload.get("type") != expected_type:
+        # Traité comme une erreur JWT pour rester cohérent avec la gestion appelante.
+        raise JWTError(f"Type de token inattendu: {payload.get('type')!r} (attendu {expected_type!r})")
+    return payload
 
 
 # creation du model pour le token, on ne le fait pas dans models.py car un token n'est pas une table de la base de données
@@ -88,16 +117,19 @@ class ShareTokenResponse(BaseModel):
 
 
 # fonction pour créer un token
-def create_access_token(username: str, user_id: int, expires_delta: timedelta):
+def create_access_token(username: str, user_id: int, expires_delta: timedelta, is_superuser: bool = False):
     """fonction pour créer un token
     :param username: le nom de l'utilisateur
     :param user_id: l'id de l'utilisateur
-    :param expires_delta: la durée de vie du token"""
+    :param expires_delta: la durée de vie du token
+    :param is_superuser: droit administrateur porté par le token (bug #485)"""
 
-    encode = {"sub": username, "id": user_id}
+    # #485 : porter `is_superuser` dans les claims pour que get_current_user() puisse
+    # l'exposer (ajouté APRÈS le durcissement du décodage ci-dessus).
+    encode = {"sub": username, "id": user_id, "is_superuser": bool(is_superuser)}
     expire = datetime.now(UTC) + expires_delta
     encode.update({"exp": expire})
-    return jwt.encode(encode, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(encode, SECRET_KEY, algorithm=JWT_SIGNING_ALGORITHM)
 
 
 # fonction pour générer un code PIN alphanumérique
@@ -119,128 +151,39 @@ def create_album_share_token(album_id: int, pin: str, expiration_hours: int = 24
     # SEC-05 : stocker un hash du PIN au lieu du PIN en clair
     pin_hash = hashlib.sha256(pin.encode()).hexdigest()
     payload = {"album_id": album_id, "type": "album_share", "pin_hash": pin_hash, "exp": expire}
-    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    token = jwt.encode(payload, SECRET_KEY, algorithm=JWT_SIGNING_ALGORITHM)
     return token, expire
 
 
-# fonction pour vérifier les tentatives de rate limiting
-def check_rate_limit(token: str) -> None:
-    """Vérifie si le token n'est pas bloqué par rate limiting
-    :param token: le token JWT
-    :raises HTTPException: si trop de tentatives échouées
-    """
-    # Créer un hash du token pour la clé du cache (évite de stocker le token complet)
-    import hashlib
-
-    token_hash = hashlib.sha256(token.encode()).hexdigest()[:16]
-
-    current_time = time.time()
-    cache_entry = failed_attempts_cache.get(token_hash, {})
-
-    # Vérifier si le token est bloqué
-    if "blocked_until" in cache_entry:
-        if current_time < cache_entry["blocked_until"]:
-            remaining_seconds = int(cache_entry["blocked_until"] - current_time)
-            remaining_minutes = remaining_seconds // 60
-
-            logger.warning(
-                f"Tentative d'accès bloquée par rate limiting. " f"Token: {token_hash}, Reste: {remaining_minutes}min"
-            )
-
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "error": "too_many_attempts",
-                    "message": f"Trop de tentatives échouées. Réessayez dans {remaining_minutes} minute(s).",
-                    "retry_after_seconds": remaining_seconds,
-                },
-            )
-        else:
-            # Le blocage a expiré, nettoyer le cache
-            logger.info(f"Blocage rate limiting expiré pour token {token_hash}")
-            del failed_attempts_cache[token_hash]
-
-
-def record_failed_attempt(token: str) -> None:
-    """Enregistre une tentative échouée et bloque si nécessaire
-    :param token: le token JWT
-    """
-    import hashlib
-
-    token_hash = hashlib.sha256(token.encode()).hexdigest()[:16]
-
-    current_time = time.time()
-    cache_entry = failed_attempts_cache[token_hash]
-
-    # Première tentative ou fenêtre expirée
-    if (
-        "first_attempt" not in cache_entry
-        or (current_time - cache_entry["first_attempt"]) > rate_limiting.window_seconds
-    ):
-        cache_entry["attempts"] = 1
-        cache_entry["first_attempt"] = current_time
-        logger.info(f"Première tentative échouée pour token {token_hash}")
-    else:
-        # Incrémenter le compteur
-        cache_entry["attempts"] = cache_entry.get("attempts", 0) + 1
-        logger.warning(
-            f"Tentative échouée {cache_entry['attempts']}/{rate_limiting.max_attempts} " f"pour token {token_hash}"
-        )
-
-    # Bloquer si limite atteinte
-    if cache_entry["attempts"] >= rate_limiting.max_attempts:
-        cache_entry["blocked_until"] = current_time + rate_limiting.window_seconds
-        logger.error(
-            f"Token {token_hash} bloqué pour {rate_limiting.window_seconds // 60} minutes "
-            f"après {rate_limiting.max_attempts} tentatives échouées"
-        )
-
-
-def clear_failed_attempts(token: str) -> None:
-    """Nettoie les tentatives échouées après succès
-    :param token: le token JWT
-    """
-    import hashlib
-
-    token_hash = hashlib.sha256(token.encode()).hexdigest()[:16]
-    if token_hash in failed_attempts_cache:
-        attempts = failed_attempts_cache[token_hash].get("attempts", 0)
-        logger.info(f"Accès réussi pour token {token_hash} " f"(tentatives précédentes: {attempts})")
-        del failed_attempts_cache[token_hash]
-
-
 # fonction pour vérifier un token de partage
-def verify_share_token(token: str, pin: str) -> int:
+def verify_share_token(db, token: str, pin: str) -> int:
     """Vérifie la validité du token de partage et du PIN
+    :param db: session de base de données (pour le rate limiting durable)
     :param token: le token JWT
     :param pin: le code PIN fourni par l'utilisateur
     :return: l'album_id si valide
     :raises HTTPException: si le token est invalide, expiré ou PIN incorrect
     """
+    from utils.rate_limit import get_attempts
+
+    # Clé de rate limiting durable dérivée du token (hash côté utils.rate_limit).
+    cle_rl = f"share:{token}"
+
     # Vérifier le rate limiting AVANT toute validation
-    check_rate_limit(token)
+    check_rate_limit(db, cle_rl)
 
     try:
-        # Décode le token (vérifie automatiquement l'expiration)
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-
-        # Vérifier que c'est bien un token de partage
-        if payload.get("type") != "album_share":
-            logger.warning("Tentative d'utilisation d'un token non-partage")
-            raise HTTPException(
-                status_code=403,
-                detail={"error": "invalid_token_type", "message": "Ce lien de partage n'est pas valide"},
-            )
+        # Décode le token avec durcissement strict (HS256, exp exigée).
+        payload = decode_token(token, expected_type="album_share")
 
         # SEC-05 : comparer le hash du PIN fourni avec le hash stocké dans le token
         pin_hash = hashlib.sha256(pin.encode()).hexdigest()
         if payload.get("pin_hash") != pin_hash:
-            # Enregistrer la tentative échouée
-            record_failed_attempt(token)
+            # Enregistrer la tentative échouée (durable)
+            record_failed_attempt(db, cle_rl)
 
             # Calculer le nombre de tentatives restantes
-            token_hash = hashlib.sha256(token.encode()).hexdigest()[:16]
-            attempts = failed_attempts_cache.get(token_hash, {}).get("attempts", 0)
+            attempts = get_attempts(db, cle_rl)
             remaining = rate_limiting.max_attempts - attempts
 
             raise HTTPException(
@@ -261,7 +204,7 @@ def verify_share_token(token: str, pin: str) -> int:
             )
 
         # Succès : nettoyer les tentatives échouées
-        clear_failed_attempts(token)
+        clear_failed_attempts(db, cle_rl)
         logger.info(f"Accès réussi à l'album {album_id} via token de partage")
 
         return album_id
@@ -314,7 +257,9 @@ async def get_current_user(request: Request):
     token = get_token_from_cookie_or_header(request)
 
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        # Décodage durci (HS256 épinglé, signature + exp exigées) sur le chemin
+        # cookie ET header Authorization (get_token_from_cookie_or_header).
+        payload = decode_token(token)
         username: str = payload.get("sub")
         user_id: int = payload.get("id")
         if username is None or user_id is None:
@@ -322,11 +267,29 @@ async def get_current_user(request: Request):
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Le token d'accés n'a pas passé la vérification :( "
             )
 
-        return {"email": username, "id": user_id}
+        # #485 : exposer `is_superuser` porté par le token (défaut False pour les
+        # anciens tokens émis avant le correctif).
+        return {"email": username, "id": user_id, "is_superuser": bool(payload.get("is_superuser", False))}
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Le token d'accés n'a pas passé la vérification :( "
         )
+
+
+# Dépendance réutilisable : exige un utilisateur authentifié ET superuser (SEC-01).
+# Vérifie le rôle en base plutôt qu'en se fiant au seul claim du token, de sorte
+# qu'une rétrogradation prend effet immédiatement. Renvoie l'utilisateur DB pour
+# que l'endpoint puisse le journaliser/l'utiliser. À utiliser via
+# `Depends(require_superuser)` sur les endpoints réservés aux administrateurs.
+async def require_superuser(request: Request, db: db_dependency):
+    current_user_data = await get_current_user(request)
+    current_user = crud.get_user_info_by_id(db, user_id=current_user_data["id"])
+    if not current_user or not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Accès réservé aux administrateurs",
+        )
+    return current_user
 
 
 # TODO : fonctions de hashage déplacées vers utils/password.py pour éviter imports circulaires
@@ -506,39 +469,43 @@ async def login(response: Response, form_data: Annotated[OAuth2PasswordRequestFo
     :param db: session de base de données
     :return: message de succès
     """
-    # SEC-21 : rate-limiting sur le login (clé par email pour limiter le bruteforce ciblant un compte)
+    # SEC-21 : rate-limiting durable sur le login (clé par email pour limiter le bruteforce ciblant un compte)
     email_normalise = (form_data.username or "").lower().strip()
     cle_rate_limit = f"login:{email_normalise}"
-    check_rate_limit(cle_rate_limit)
+    check_rate_limit(db, cle_rate_limit)
 
     # get the user from the DB by email, email vient de la form flask utiliser pour le login
     # TODO : changer form_data.username par form_data.email
     user = crud.get_user_info_by_email(db, email=form_data.username)
     if not user:
         # Enregistrer la tentative échouée même si l'utilisateur n'existe pas (anti-énumération)
-        record_failed_attempt(cle_rate_limit)
+        record_failed_attempt(db, cle_rate_limit)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="L'utilisateur n'existe pas",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not verify_password(form_data.password, user.password):
-        record_failed_attempt(cle_rate_limit)
+        record_failed_attempt(db, cle_rate_limit)
         raise HTTPException(status_code=400, detail="Es tu sur de ton mot de passe ?")
 
     # Connexion réussie : nettoyer les tentatives précédentes
-    clear_failed_attempts(cle_rate_limit)
+    clear_failed_attempts(db, cle_rate_limit)
 
-    # Créer le token JWT
-    access_token = create_access_token(user.email, user.id, timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    # Créer le token JWT (#485 : porte le droit is_superuser)
+    access_token = create_access_token(
+        user.email, user.id, timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES), is_superuser=user.is_superuser
+    )
 
     # Stocker le token dans un cookie HttpOnly sécurisé (Tâche 80)
+    # Le drapeau Secure est piloté par l'environnement : True en production (HTTPS),
+    # False en développement local (HTTP) pour ne pas casser le dev Windows/SQLite.
     response.set_cookie(
         key=COOKIE_NAME,
         value=f"Bearer {access_token}",
         httponly=True,  # Protection XSS: pas accessible via JavaScript
-        secure=False,  # TODO: mettre True en production (nécessite HTTPS)
-        samesite="lax",  # Protection CSRF
+        secure=app_config.cookie_secure(),  # True en prod (HTTPS), False en dev
+        samesite=app_config.cookie_samesite(),  # Protection CSRF (lax par défaut)
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # En secondes
     )
 
@@ -555,7 +522,14 @@ async def logout(response: Response):
     :param response: objet Response pour supprimer le cookie
     :return: message de succès
     """
-    response.delete_cookie(key=COOKIE_NAME)
+    # Les attributs doivent correspondre à ceux de set_cookie pour une suppression fiable
+    # (les navigateurs exigent un Secure/SameSite cohérent pour effacer le cookie).
+    response.delete_cookie(
+        key=COOKIE_NAME,
+        httponly=True,
+        secure=app_config.cookie_secure(),
+        samesite=app_config.cookie_samesite(),
+    )
     logger.info("Utilisateur déconnecté (cookie supprimé)")
     return {"message": "Déconnexion réussie"}
 
@@ -625,7 +599,7 @@ def create_password_reset_token(email: str, user_id: int) -> str:
     """
     expire = datetime.now(UTC) + timedelta(minutes=password_reset.token_expire_minutes)
     payload = {"sub": email, "id": user_id, "type": "password_reset", "exp": expire}
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(payload, SECRET_KEY, algorithm=JWT_SIGNING_ALGORITHM)
 
 
 def verify_password_reset_token(token: str) -> dict:
@@ -635,11 +609,8 @@ def verify_password_reset_token(token: str) -> dict:
     :raises HTTPException: si le token est invalide ou expiré
     """
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-
-        # Vérifier que c'est bien un token de reset password
-        if payload.get("type") != "password_reset":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token invalide")
+        # Décodage durci (HS256 épinglé, signature + exp exigées).
+        payload = decode_token(token, expected_type="password_reset")
 
         email = payload.get("sub")
         user_id = payload.get("id")
@@ -665,11 +636,11 @@ async def forgot_password(request_data: ForgotPasswordRequest, db: db_dependency
     """
     email = request_data.email.lower().strip()
 
-    # SEC-21 : rate-limiting sur la demande de reset (clé par email)
+    # SEC-21 : rate-limiting durable sur la demande de reset (clé par email)
     # On enregistre toujours une tentative pour ne pas révéler si l'email existe
     cle_rate_limit = f"forgot:{email}"
-    check_rate_limit(cle_rate_limit)
-    record_failed_attempt(cle_rate_limit)
+    check_rate_limit(db, cle_rate_limit)
+    record_failed_attempt(db, cle_rate_limit)
 
     # Chercher l'utilisateur
     user = crud.get_user_info_by_email(db, email=email)

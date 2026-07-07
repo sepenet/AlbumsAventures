@@ -13,6 +13,8 @@ import secrets
 
 from fastapi import HTTPException, Request, Response
 
+from utils.config import app_config
+
 logger = logging.getLogger(__name__)
 
 # Nom du cookie et du champ de formulaire
@@ -42,14 +44,14 @@ def set_csrf_cookie(response: Response, token: str) -> None:
     Ajoute le cookie CSRF à la réponse.
     - httponly=False : le JS peut lire le token si nécessaire pour AJAX
     - samesite="strict" : protection contre les requêtes cross-site
-    - secure=False en dev, à passer à True en production avec HTTPS
+    - secure : piloté par l'environnement (True en production HTTPS, False en dev)
     """
     response.set_cookie(
         key=CSRF_COOKIE_NAME,
         value=token,
         httponly=False,  # Doit être lisible par le formulaire
         samesite="strict",
-        secure=False,  # TODO: passer à True en production avec HTTPS
+        secure=app_config.cookie_secure(),  # True en prod (HTTPS), False en dev
         max_age=3600,  # 1 heure
     )
 

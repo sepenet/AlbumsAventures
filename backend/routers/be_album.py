@@ -273,7 +273,7 @@ async def get_shared_album(
     Aucune authentification utilisateur requise.
     """
     # Vérifier le token et le PIN
-    album_id = verify_share_token(token, pin.upper())
+    album_id = verify_share_token(db, token, pin.upper())
 
     # Récupérer l'album
     db_album = crud.get_album_by_id_with_category(db, album_id)

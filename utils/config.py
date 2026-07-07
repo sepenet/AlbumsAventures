@@ -101,6 +101,12 @@ class image:
     thumbnail_width = 640
     thumbnail_height = 1080
 
+    # Nombre maximum de threads simultanés pour la génération de vignettes TUS
+    # (PIL/OpenCV). Borne le pool de workers du pipeline post-upload afin d'éviter
+    # le spawn illimité de threads daemon sous forte charge (condition architecte
+    # UPL-02). Réglable via THUMBNAIL_MAX_WORKERS ; défaut prudent = 2.
+    max_thumbnail_workers = max(1, int(SecretStore.get("THUMBNAIL_MAX_WORKERS", "2")))
+
     @classmethod
     def log_paths(cls):
         """Log les chemins d'images — à appeler après l'initialisation du logging."""
@@ -134,6 +140,73 @@ class auth_config:
 
     # Nom du cookie HTTP pour stocker le token JWT
     cookie_name = SecretStore.get("COOKIE_NAME", "access_token")
+
+
+# Configuration de sécurité applicative (transport, cookies, CORS, en-têtes)
+class app_config:
+    """Configuration de sécurité pilotée par l'environnement.
+
+    Le drapeau ``ENVIRONMENT`` (development | production) commande le durcissement
+    du transport : cookies ``Secure``, redirection HTTPS, HSTS et hôtes de confiance.
+    En développement (défaut) tout reste compatible HTTP local (Windows/SQLite).
+    """
+
+    # Environnement d'exécution : "development" (défaut) ou "production"
+    environment = SecretStore.get("ENVIRONMENT", "development").lower().strip()
+
+    @classmethod
+    def is_production(cls) -> bool:
+        """Retourne True uniquement en production (durcissement transport actif)."""
+        return cls.environment == "production"
+
+    @classmethod
+    def cookie_secure(cls) -> bool:
+        """Cookies marqués ``Secure`` (HTTPS uniquement) en production."""
+        # Permet un override explicite (ex. staging HTTP) via COOKIE_SECURE.
+        override = SecretStore.get("COOKIE_SECURE", "").lower().strip()
+        if override in ("true", "1", "yes"):
+            return True
+        if override in ("false", "0", "no"):
+            return False
+        return cls.is_production()
+
+    @classmethod
+    def cookie_samesite(cls) -> str:
+        """Politique SameSite du cookie d'authentification (défaut : lax)."""
+        return SecretStore.get("COOKIE_SAMESITE", "lax").lower().strip()
+
+    @classmethod
+    def cors_allowed_origins(cls) -> list[str]:
+        """Liste blanche d'origines CORS, pilotée par config (jamais wildcard).
+
+        ``CORS_ALLOWED_ORIGINS`` : liste séparée par des virgules. En développement,
+        défaut sur l'origine locale historique.
+        """
+        raw = SecretStore.get("CORS_ALLOWED_ORIGINS", "http://localhost:5003")
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+    @classmethod
+    def trusted_hosts(cls) -> list[str]:
+        """Hôtes autorisés pour TrustedHostMiddleware (défaut : tout en dev)."""
+        raw = SecretStore.get("TRUSTED_HOSTS", "*")
+        return [host.strip() for host in raw.split(",") if host.strip()]
+
+    # Durée HSTS (secondes). 2 ans par défaut, appliqué uniquement en production.
+    hsts_max_age = int(SecretStore.get("HSTS_MAX_AGE", "63072000"))
+
+    @classmethod
+    def legacy_xhr_upload_enabled(cls) -> bool:
+        """Endpoint XHR multipart hérité (``POST /be_resizer/upload_images``).
+
+        Le chemin d'upload par défaut est TUS resumable + golden-retriever
+        (fiabilité mobile). L'ancien endpoint XHR est conservé UNIQUEMENT comme
+        repli explicite, activable par configuration (condition architecte/sécurité
+        UPL-06, TODO #395). Piloté par ``LEGACY_XHR_UPLOAD`` ; défaut activé pour
+        préserver le repli et la compatibilité, à passer à ``false`` en production
+        une fois TUS validé sur le terrain.
+        """
+        raw = SecretStore.get("LEGACY_XHR_UPLOAD", "true").lower().strip()
+        return raw not in ("false", "0", "no", "off")
 
 
 # Configuration du backend API

@@ -4,6 +4,9 @@
 
 {% block content %}
 <!-- Uppy CSS -->
+<!-- Uppy v3.27.0 (bundle combiné UMD, global `Uppy`). La montée majeure v3→v5
+     (#393) est reportée à la Phase 3 (bundler ESM) : la CSP Phase 1 autorise déjà
+     releases.transloadit.com pour les assets v5 (allocation anticipée). -->
 <link href="https://releases.transloadit.com/uppy/v3.27.0/uppy.min.css" rel="stylesheet">
 
 <div class="py-6 max-w-4xl mx-auto" x-data="uploadManager()">
@@ -61,6 +64,59 @@
     <div id="uppy-dashboard"></div>
   </div>
 
+  <!-- Métrique de compression client (#380) : octets économisés avant envoi -->
+  <div x-show="metrics.compressedSavedBytes > 0" x-cloak
+       class="mt-6 p-4 rounded-lg bg-sky-50 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-800">
+    <div class="flex items-center gap-3">
+      <svg class="w-5 h-5 text-sky-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+      </svg>
+      <p class="text-sm text-sky-700 dark:text-sky-300">
+        Compression : <span class="font-semibold" x-text="formatBytes(metrics.compressedSavedBytes)"></span>
+        économisés (<span x-text="formatBytes(metrics.originalBytes)"></span> →
+        <span x-text="formatBytes(metrics.sentBytes)"></span> envoyés).
+      </p>
+    </div>
+  </div>
+
+  <!-- Suivi du post-traitement durable (vignettes) par fichier — condition UPL-01 -->
+  <div x-show="processingSummary" x-cloak
+       class="mt-6 p-4 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Traitement des vignettes</h2>
+      <div class="flex items-center gap-3 text-xs" x-show="processingSummary">
+        <span class="text-green-600 dark:text-green-400">✓ <span x-text="processingSummary?.success || 0"></span></span>
+        <span class="text-amber-600 dark:text-amber-400">⏳ <span x-text="(processingSummary?.pending || 0) + (processingSummary?.processing || 0)"></span></span>
+        <span class="text-gray-500 dark:text-gray-400">⤼ <span x-text="processingSummary?.skipped || 0"></span></span>
+        <span class="text-red-600 dark:text-red-400">✗ <span x-text="processingSummary?.failed || 0"></span></span>
+      </div>
+    </div>
+    <ul class="space-y-1 max-h-56 overflow-y-auto">
+      <template x-for="pf in processingFiles" :key="pf.filename">
+        <li class="flex items-center justify-between text-sm py-1 border-b border-gray-100 dark:border-gray-700 last:border-0">
+          <span class="truncate text-gray-700 dark:text-gray-300" x-text="pf.filename"></span>
+          <span class="ml-3 flex-shrink-0 text-xs font-medium"
+                :class="{
+                  'text-green-600 dark:text-green-400': pf.status === 'success',
+                  'text-amber-600 dark:text-amber-400': pf.status === 'pending' || pf.status === 'processing',
+                  'text-gray-500 dark:text-gray-400': pf.status === 'skipped',
+                  'text-red-600 dark:text-red-400': pf.status === 'failed'
+                }"
+                x-text="{
+                  success: 'Vignette prête',
+                  processing: 'En cours…',
+                  pending: 'En attente…',
+                  skipped: 'Ignoré',
+                  failed: 'Échec'
+                }[pf.status] || pf.status"></span>
+        </li>
+      </template>
+    </ul>
+    <p x-show="processingFiles.some(f => f.status === 'failed')" class="mt-2 text-xs text-red-600 dark:text-red-400">
+      Certaines vignettes ont échoué — utilisez « Régénérer vignettes » ci-dessous.
+    </p>
+  </div>
+
   <!-- Actions post-upload -->
   <div class="mt-6 flex flex-col sm:flex-row gap-3">
     <a href="/album/{{ album.id }}"
@@ -98,6 +154,14 @@ function uploadManager() {
     uploadResult: null,
     regenerating: false,
     uppy: null,
+    // Suivi durable du post-traitement (vignettes) par fichier — condition UPL-01.
+    processingFiles: [],
+    processingSummary: null,
+    statusPollTimer: null,
+    statusPollCount: 0,
+    // Métriques de fiabilité visibles par l'utilisateur (condition product-owner).
+    metrics: { compressedSavedBytes: 0, originalBytes: 0, sentBytes: 0 },
+    originalSizes: {},
 
     init() {
       const albumId = {{ album.id }};
@@ -188,22 +252,50 @@ function uploadManager() {
       this.uppy.setMeta({ album_id: String(albumId) });
 
       // Upload TUS resumable (protocole tus.io)
-      // - chunkSize 256 KB : indispensable sur 4G instable. Les opérateurs mobiles
-      //   et les NAT carriers coupent fréquemment les longues requêtes PATCH (>1s).
-      //   Avec 256 KB, chaque PATCH dure typiquement 50-300 ms et passe avant
-      //   tout glitch réseau (cf. logs prod 2026-04-27 où 21/22 PATCH 2MB ont
-      //   été perdus silencieusement entre Edge Android et Caddy).
+      // - chunkSize ADAPTATIF : petit chunk sur lien mobile contraint, plus gros
+      //   sur bon lien (moins de round-trips). Le PLANCHER 256 KB reste imposé
+      //   (incident prod 2026-04-27 : 21/22 PATCH 2 MB perdus silencieusement
+      //   entre Edge Android et Caddy). La logique miroir fait autorité côté
+      //   serveur (GET /be_resizer/upload_config), qui ne descend jamais sous le
+      //   plancher même si le client oublie de brider.
       // - retryDelays : backoff agressif au début, puis plus espacé
       // - withCredentials : envoie le cookie JWT pour l'auth FastAPI
       // - limit : 1 fichier à la fois (séquentiel) pour ne pas saturer le lien
       // Voir backend/routers/be_resizer.py (tus_router) - tâches TODO #391/#392.
+      const chunkSize = self.selectChunkSize();
       this.uppy.use(Uppy.Tus, {
         endpoint: '/be_resizer/tus/',
-        chunkSize: 256 * 1024,
+        chunkSize: chunkSize,
         retryDelays: [0, 1000, 3000, 5000, 10000, 20000, 40000, 60000],
         removeFingerprintOnSuccess: true,
         withCredentials: true,
         limit: 1
+      });
+
+      // Compression d'image côté client AVANT l'upload (#380). Réduit fortement
+      // les octets transférés sur mobile — principal levier de fiabilité sur
+      // réseau contraint. La limite serveur MAX_IMAGE_SIZE (30 MB) reste
+      // appliquée côté backend. Chargé depuis le bundle Uppy combiné (même asset
+      // CDN déjà autorisé par la CSP Phase 1) ; garde défensive si absent.
+      if (Uppy.Compressor) {
+        this.uppy.use(Uppy.Compressor, {
+          quality: 0.8,
+          limit: 10
+        });
+      }
+
+      // Reprise après rechargement / crash d'onglet / bascule d'app mobile
+      // (@uppy/golden-retriever, #394). Stockage IndexedDB (métadonnées + petits
+      // fichiers) ; l'état TUS persistant côté serveur permet de reprendre
+      // l'upload en cours au lieu de tout recommencer. Le stockage Service Worker
+      // (gros fichiers) nécessite un sw.js bundlé -> reporté à la Phase 4 (PWA).
+      if (Uppy.GoldenRetriever) {
+        this.uppy.use(Uppy.GoldenRetriever, { serviceWorker: false });
+      }
+
+      // Mémoriser la taille d'origine pour mesurer le gain de compression.
+      this.uppy.on('file-added', (file) => {
+        self.originalSizes[file.id] = file.size || 0;
       });
 
       // Gérer le succès (chaque fichier est uploadé séparément)
@@ -212,6 +304,9 @@ function uploadManager() {
 
         const totalUploaded = result.successful.length;
         const totalFailed = result.failed.length;
+
+        // Mesurer le gain de compression (métrique de fiabilité #380).
+        self.computeCompressionMetric(result.successful);
 
         if (totalFailed > 0) {
           self.uploadResult = {
@@ -237,6 +332,13 @@ function uploadManager() {
             }
           };
         }
+
+        // Le backend génère la vignette dans un pool de threads borné APRÈS le
+        // 204. On interroge le statut durable pour signaler à l'utilisateur les
+        // vignettes en cours / en échec (condition UPL-01) au lieu de les taire.
+        if (totalUploaded > 0) {
+          self.startProcessingStatusPolling();
+        }
       });
 
       // Gérer les erreurs
@@ -247,12 +349,17 @@ function uploadManager() {
           message: 'Erreur lors de l\'upload: ' + error.message
         };
       });
+
+      // Aligner le chunk sur la valeur autoritaire du serveur (best-effort,
+      // asynchrone : n'empêche jamais le Dashboard/Tus de fonctionner).
+      self.refineChunkSizeFromServer();
     },
 
     async regenerateThumbnails() {
       this.regenerating = true;
       try {
         const response = await fetch(`/be_resizer/create_thumbnails/{{ album.id }}`, {
+          method: 'POST',
           credentials: 'include'
         });
         const data = await response.json();
@@ -281,6 +388,131 @@ function uploadManager() {
       } finally {
         this.regenerating = false;
       }
+    },
+
+    // ── Chunk adaptatif (client) ────────────────────────────────────────────
+    // Calcule une taille de chunk TUS à partir de la Network Information API
+    // (navigator.connection). Le PLANCHER 256 KB est TOUJOURS imposé (incident
+    // prod 2026-04-27 : PATCH 2 MB perdus silencieusement Edge Android → Caddy),
+    // le plafond est 8 MB. Synchrone : appelé dans init() avant this.uppy.use(Tus).
+    // Le serveur reste autoritaire ; refineChunkSizeFromServer() aligne ensuite.
+    selectChunkSize() {
+      const FLOOR = 256 * 1024;
+      const CEILING = 8 * 1024 * 1024;
+      const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      if (!conn) {
+        return FLOOR;
+      }
+      if (conn.saveData) {
+        return FLOOR;
+      }
+      const parType = {
+        'slow-2g': FLOOR,
+        '2g': FLOOR,
+        '3g': 512 * 1024,
+        '4g': 2 * 1024 * 1024,
+        '5g': 4 * 1024 * 1024,
+      };
+      let taille = parType[(conn.effectiveType || '').toLowerCase()] || FLOOR;
+      if (typeof conn.downlink === 'number' && conn.downlink > 0) {
+        taille = Math.max(taille, Math.floor(conn.downlink * 512 * 1024));
+      }
+      return Math.max(FLOOR, Math.min(taille, CEILING));
+    },
+
+    // Affine la taille de chunk avec la valeur calculée côté serveur (autorité).
+    // Best-effort : en cas d'erreur réseau, on garde la valeur client. Le serveur
+    // ne descend jamais sous le plancher, mais on re-garde ici par défense.
+    async refineChunkSizeFromServer() {
+      const FLOOR = 256 * 1024;
+      try {
+        const conn = navigator.connection || {};
+        const params = new URLSearchParams();
+        if (conn.effectiveType) params.set('effective_type', conn.effectiveType);
+        if (typeof conn.downlink === 'number') params.set('downlink', String(conn.downlink));
+        if (conn.saveData) params.set('save_data', 'true');
+        const resp = await fetch('/be_resizer/upload_config?' + params.toString(), { credentials: 'include' });
+        if (!resp.ok) return;
+        const cfg = await resp.json();
+        const serveur = Math.max(FLOOR, cfg.chunk_size || FLOOR);
+        const tus = this.uppy && this.uppy.getPlugin('Tus');
+        if (tus) {
+          tus.setOptions({ chunkSize: serveur });
+        }
+      } catch (e) {
+        // Réseau indisponible : la valeur client (avec plancher) reste en place.
+      }
+    },
+
+    // ── Métrique de compression (#380) ──────────────────────────────────────
+    // Compare les tailles d'origine (capturées à 'file-added', avant Compressor)
+    // aux tailles réellement envoyées (après compression). Expose le gain d'octets
+    // à l'utilisateur comme métrique de fiabilité sur réseau contraint.
+    computeCompressionMetric(successful) {
+      let original = 0;
+      let sent = 0;
+      (successful || []).forEach((file) => {
+        const orig = this.originalSizes[file.id] || file.size || 0;
+        const finale = file.size || 0;
+        original += orig;
+        sent += finale;
+      });
+      const saved = Math.max(0, original - sent);
+      this.metrics = { originalBytes: original, sentBytes: sent, compressedSavedBytes: saved };
+    },
+
+    // ── Suivi du post-traitement durable (UPL-01 / condition 6) ─────────────
+    // Interroge l'endpoint durable /processing_status/{album_id} et expose le
+    // statut par fichier (vignette en cours / réussie / échouée). S'arrête dès
+    // qu'aucun fichier n'est en attente/en cours, ou après ~2 min (garde-fou).
+    startProcessingStatusPolling() {
+      const albumId = {{ album.id }};
+      const self = this;
+      this.statusPollCount = 0;
+      if (this.statusPollTimer) {
+        clearInterval(this.statusPollTimer);
+        this.statusPollTimer = null;
+      }
+      const poll = async () => {
+        self.statusPollCount += 1;
+        try {
+          const resp = await fetch(`/be_resizer/processing_status/${albumId}`, { credentials: 'include' });
+          if (resp.ok) {
+            const data = await resp.json();
+            self.processingFiles = data.files || [];
+            self.processingSummary = data.summary || null;
+            const s = data.summary || {};
+            const enCours = (s.pending || 0) + (s.processing || 0);
+            if (enCours === 0) {
+              self.stopProcessingStatusPolling();
+              return;
+            }
+          }
+        } catch (e) {
+          // Réseau : on retentera au prochain tick.
+        }
+        if (self.statusPollCount >= 40) {
+          self.stopProcessingStatusPolling();
+        }
+      };
+      poll();
+      this.statusPollTimer = setInterval(poll, 3000);
+    },
+
+    stopProcessingStatusPolling() {
+      if (this.statusPollTimer) {
+        clearInterval(this.statusPollTimer);
+        this.statusPollTimer = null;
+      }
+    },
+
+    // Formatage lisible des octets pour l'affichage des métriques.
+    formatBytes(octets) {
+      const n = Number(octets) || 0;
+      if (n < 1024) return n + ' o';
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' Ko';
+      if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' Mo';
+      return (n / (1024 * 1024 * 1024)).toFixed(2) + ' Go';
     }
   }
 }

@@ -21,6 +21,12 @@ logs/*.log.*
 # Uploads TUS temporaires (resumable, voir backend/routers/be_resizer.py tus_router)
 /uploads_tus/
 
+# SPA React (Phase 3) : dépendances build-time et sortie de build Vite.
+# Le code source (frontend/spa/src, configs) EST versionné ; seuls ces
+# artefacts générés sont ignorés (voir frontend/spa/.gitignore).
+/frontend/spa/node_modules/
+/frontend/spa/dist/
+
 # Fichier de secrets local (ne JAMAIS commiter)
 .env
 .env.*
@@ -38,3 +44,7 @@ coverage.xml
 
 # Baseline detect-secrets
 .secrets.baseline
+
+
+# APM dependencies
+apm_modules/

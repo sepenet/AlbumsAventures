@@ -2,6 +2,7 @@
 Tests fonctionnels pour l'authentification (be_auth).
 """
 
+import pytest
 from fastapi import status
 
 
@@ -309,3 +310,254 @@ class TestPasswordReset:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+class TestJWTAlgorithmConfinement:
+    """SEC (condition 2) : le décodage JWT est épinglé à HS256.
+
+    Rejette explicitement ``alg: none`` (token non signé) et toute confusion
+    d'algorithme (ex. token signé HS512), sur le helper ``decode_token`` comme
+    sur un endpoint protégé.
+    """
+
+    @staticmethod
+    def _payload() -> dict:
+        from datetime import UTC, datetime, timedelta
+
+        # ``exp`` en epoch (int) pour une sérialisation JSON directe (token forgé).
+        exp = int((datetime.now(UTC) + timedelta(hours=1)).timestamp())
+        return {"sub": "attacker@example.com", "id": 1, "exp": exp}
+
+    @staticmethod
+    def _make_alg_none_token(payload: dict) -> str:
+        """Forge un JWT non signé (``alg: none``) sans dépendre de l'encodeur jose."""
+        import base64
+        import json
+
+        def _b64url(data: dict) -> str:
+            raw = json.dumps(data, separators=(",", ":")).encode()
+            return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+        header = {"alg": "none", "typ": "JWT"}
+        # Signature vide : la forme d'un token non signé.
+        return f"{_b64url(header)}.{_b64url(payload)}."
+
+    def test_decode_token_rejects_alg_none(self):
+        """Un token non signé (``alg: none``) doit être rejeté par decode_token."""
+        from jose.exceptions import JWTError
+
+        from backend.routers.be_auth import decode_token
+
+        none_token = self._make_alg_none_token(self._payload())
+        with pytest.raises(JWTError):
+            decode_token(none_token)
+
+    def test_decode_token_rejects_wrong_algorithm(self):
+        """Un token signé avec un autre algorithme (HS512) doit être rejeté."""
+        from jose import jwt
+        from jose.exceptions import JWTError
+
+        from backend.routers.be_auth import SECRET_KEY, decode_token
+
+        wrong_alg_token = jwt.encode(self._payload(), SECRET_KEY, algorithm="HS512")
+        with pytest.raises(JWTError):
+            decode_token(wrong_alg_token)
+
+    def test_protected_route_rejects_alg_none_token(self, client):
+        """L'endpoint protégé ``/be_auth/me`` doit renvoyer 401 pour un token alg:none."""
+        none_token = self._make_alg_none_token(self._payload())
+        response = client.get("/be_auth/me", cookies={"access_token": f"Bearer {none_token}"})
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+class TestSecurityHeaders:
+    """H-3 (conditions 3/4/7) : la CSP et les en-têtes de sécurité sont émis.
+
+    Vérifie que le middleware ``SecurityHeadersMiddleware`` (câblé via
+    ``configure_security``) pose bien la CSP et les en-têtes clés sur les réponses.
+    Couvre le durcissement Phase 3.9 (CSP à deux niveaux : repli Jinja vs SPA).
+    """
+
+    def test_security_headers_present_on_response(self, client):
+        """Une réponse porte la CSP + nosniff + protection frame + referrer-policy."""
+        # 401 attendu sans token : les en-têtes middleware sont posés quel que soit le statut.
+        response = client.get("/be_auth/me")
+
+        assert "Content-Security-Policy" in response.headers
+        csp = response.headers["Content-Security-Policy"]
+        assert "default-src 'self'" in csp
+        assert "frame-ancestors 'none'" in csp
+        assert "object-src 'none'" in csp
+
+        assert response.headers.get("X-Content-Type-Options") == "nosniff"
+        assert response.headers.get("X-Frame-Options") == "DENY"
+        assert response.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
+        assert "Permissions-Policy" in response.headers
+
+    def test_csp_never_allows_unsafe_eval_or_wildcard(self, client):
+        """Invariant durcissement 3.9 : jamais 'unsafe-eval' ni source large '*'.
+
+        S'applique à la CSP de repli Jinja (route API / non-/app).
+        """
+        csp = client.get("/be_auth/me").headers["Content-Security-Policy"]
+
+        # 'unsafe-eval' est interdit sur toute surface (aucun eval() côté client).
+        assert "'unsafe-eval'" not in csp
+        # Aucune directive ne doit contenir une source large '*' (fetch/img/script...).
+        for directive in csp.split(";"):
+            tokens = directive.strip().split()
+            assert "*" not in tokens, f"source large '*' interdite dans : {directive.strip()!r}"
+
+    def test_jinja_csp_cdn_allowances_are_host_pinned(self, client):
+        """Les CDN encore requis par le repli Jinja sont épinglés à un hôte https précis.
+
+        Aucun schéma large (``https:``) ni wildcard d'hôte (``https://*.``) n'est toléré.
+        """
+        csp = client.get("/be_auth/me").headers["Content-Security-Policy"]
+
+        # Les 3 CDN restants doivent apparaître épinglés à leur hôte exact.
+        assert "https://cdn.tailwindcss.com" in csp
+        assert "https://unpkg.com" in csp
+        assert "https://releases.transloadit.com" in csp
+        # Pas d'allocation de schéma large ni de wildcard d'hôte.
+        assert "https:*" not in csp
+        assert "https://*" not in csp
+        # Le repli Jinja conserve (temporairement) 'unsafe-inline' pour script-src.
+        assert "'unsafe-inline'" in csp
+
+    def test_spa_csp_is_tightened_same_origin_only(self, client):
+        """La surface SPA ``/app`` reçoit la CSP DURCIE : script-src 'self', aucun CDN.
+
+        Le shell buildé ne charge que des assets same-origin hachés ; ``script-src``
+        n'autorise donc ni CDN ni ``'unsafe-inline'``. Le middleware pose la CSP quelle
+        que soit la présence du build (404 si ``dist`` absent, en-tête tout de même posé).
+        """
+        response = client.get("/app")
+        csp = response.headers["Content-Security-Policy"]
+
+        # Isole la directive script-src pour des assertions précises.
+        script_src = next(
+            (d.strip() for d in csp.split(";") if d.strip().startswith("script-src")),
+            "",
+        )
+        assert script_src == "script-src 'self'", f"script-src SPA non durci : {script_src!r}"
+
+        # Aucun CDN ni 'unsafe-inline'/'unsafe-eval' dans la politique SPA.
+        assert "https://cdn.tailwindcss.com" not in csp
+        assert "https://unpkg.com" not in csp
+        assert "https://releases.transloadit.com" not in csp
+        assert "'unsafe-eval'" not in csp
+        # Directives same-origin déjà prêtes pour la PWA Phase 4.
+        assert "worker-src 'self' blob:" in csp
+        assert "manifest-src 'self'" in csp
+        # Aucune source large.
+        for directive in csp.split(";"):
+            assert "*" not in directive.strip().split()
+
+
+class TestDurableRateLimit:
+    """M-2 (condition 6) : le rate limiting est durable, persisté en base.
+
+    Le lockout survit dans ``rate_limit_entries`` (aucun identifiant en clair) et
+    est visible depuis une autre session DB (partage inter-workers).
+    """
+
+    def test_lockout_after_max_attempts_persists_in_db(self, db_session):
+        """Après ``max_attempts`` échecs, la clé est bloquée (429) et persistée."""
+        from fastapi import HTTPException
+
+        from backend.db.models import RateLimitEntry
+        from utils.config import rate_limiting
+        from utils.rate_limit import check_rate_limit, record_failed_attempt
+
+        key = "login:ratelimit_test@example.com"
+
+        for _ in range(rate_limiting.max_attempts):
+            record_failed_attempt(db_session, key)
+
+        # L'entrée est persistée en base, avec une clé hashée (jamais l'email en clair).
+        entries = db_session.query(RateLimitEntry).all()
+        assert len(entries) == 1
+        assert entries[0].key_hash != key
+        assert entries[0].attempts >= rate_limiting.max_attempts
+
+        # La clé est désormais bloquée : check_rate_limit lève une 429.
+        with pytest.raises(HTTPException) as exc_info:
+            check_rate_limit(db_session, key)
+        assert exc_info.value.status_code == 429
+
+    def test_lockout_survives_session_cache_flush(self, db_session):
+        """Le blocage est relu depuis la base (durable), pas seulement du cache session.
+
+        On expire l'identity map SQLAlchemy pour forcer une relecture depuis le
+        store DB : le blocage doit persister (429), prouvant la durabilité.
+        """
+        from fastapi import HTTPException
+
+        from backend.db.models import RateLimitEntry
+        from utils.config import rate_limiting
+        from utils.rate_limit import check_rate_limit, record_failed_attempt
+
+        key = "pin:share_lockout_test"
+
+        for _ in range(rate_limiting.max_attempts):
+            record_failed_attempt(db_session, key)
+
+        # Vider le cache d'identité : la prochaine lecture vient réellement de la DB.
+        db_session.expire_all()
+        reloaded = db_session.query(RateLimitEntry).all()
+        assert len(reloaded) == 1
+        assert reloaded[0].blocked_until > 0
+
+        with pytest.raises(HTTPException) as exc_info:
+            check_rate_limit(db_session, key)
+        assert exc_info.value.status_code == 429
+
+
+class TestGroupMutationSuperuserGate:
+    """FU-group (OWASP A01) : les mutations ``be_group`` sont réservées aux admins.
+
+    Les endpoints ``be_group`` qui MODIFIENT l'état (create/update/delete,
+    gestion des membres et des albums) étaient authentifiés mais non protégés
+    côté serveur par une garde superuser — la restriction n'existait que dans
+    l'UI Jinja (masquage des boutons). Le correctif ajoute
+    ``Depends(require_superuser)`` au niveau de la route : un utilisateur
+    authentifié mais non-administrateur reçoit désormais un 403, tandis qu'un
+    superuser réussit. On exerce la mutation représentative ``create_group``.
+    """
+
+    def test_create_group_forbidden_for_normal_user(self, client, auth_headers):
+        """Un utilisateur authentifié non-admin reçoit 403 (garde côté serveur)."""
+        response = client.post(
+            "/be_group/create_group/",
+            json={"name": "Groupe non-admin", "description": "tentative interdite"},
+            cookies=auth_headers["cookies"],
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_create_group_allowed_for_superuser(self, client, superuser_auth_headers):
+        """Un superuser peut créer un groupe (mutation autorisée)."""
+        response = client.post(
+            "/be_group/create_group/",
+            json={"name": "Groupe admin", "description": "création autorisée"},
+            cookies=superuser_auth_headers["cookies"],
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["name"] == "Groupe admin"
+
+    def test_create_group_forbidden_for_unauthenticated(self, client):
+        """Sans session, la mutation est refusée (401)."""
+        response = client.post(
+            "/be_group/create_group/",
+            json={"name": "Groupe anonyme", "description": "sans session"},
+        )
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_delete_group_forbidden_for_normal_user(self, client, auth_headers, test_group):
+        """La suppression d'un groupe est aussi refusée (403) à un non-admin."""
+        response = client.delete(
+            f"/be_group/delete_group/{test_group['id']}",
+            cookies=auth_headers["cookies"],
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN

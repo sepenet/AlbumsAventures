@@ -1,6 +1,8 @@
+import logging
 import os
 import random
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import cv2
@@ -10,12 +12,13 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from PIL import Image
 
+from utils.config import app_config
 from utils.config import image as image_config
 
 from ..albums.folder import get_album_paths
 from ..db import crud, schemas
-from ..db.db_connect import db_dependency
-from .be_auth import get_current_user
+from ..db.db_connect import SessionLocal, db_dependency
+from .be_auth import get_current_user, require_superuser
 
 # Créer le router avec les mêmes paramètres que les autres routers
 router = APIRouter(prefix="/be_resizer", tags=["backend_resizer"], dependencies=[Depends(get_current_user)])
@@ -28,8 +31,6 @@ VIDEO_EXTENSIONS = (".mp4", ".avi", ".mov", ".mkv", ".webm")
 MAX_IMAGE_SIZE = 30 * 1024 * 1024  # 30 MB par image
 MAX_VIDEO_SIZE = 500 * 1024 * 1024  # 500 MB par vidéo
 MAX_TOTAL_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB par requête
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -309,15 +310,23 @@ def choose_random_file(album_path):
 # Endpoints section
 
 
-@router.get("/create_thumbnails/{album_id}")
+@router.post("/create_thumbnails/{album_id}")
 async def create_thumbnails(
     album_id: int,
     db: db_dependency,
+    _current_user=Depends(require_superuser),
     width: int = image_config.thumbnail_width,
     height: int = image_config.thumbnail_height,
 ):
     """
-    Créer des miniatures pour toutes les images d'un album en utilisant l'ID de l'album
+    Créer des miniatures pour toutes les images d'un album en utilisant l'ID de l'album.
+
+    Sécurité (F-1) : opération qui modifie l'état sur le disque (génération de
+    fichiers). Elle est donc exposée en **POST** (et non plus en GET) — un GET
+    modifiant l'état contourne le modèle CSRF double-submit / SameSite et peut
+    être déclenché passivement. L'accès est de plus réservé aux administrateurs
+    côté serveur via ``Depends(require_superuser)`` (403 pour les non-admins) ;
+    on ne se repose pas sur le masquage du bouton côté client.
     """
     try:
         # Obtenir les chemins des dossiers d'images et de miniatures
@@ -354,6 +363,75 @@ async def create_thumbnails(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la création des miniatures: {str(e)}")
+
+
+@router.get("/upload_config")
+async def upload_config(
+    effective_type: str | None = None,
+    downlink: float | None = None,
+    save_data: bool = False,
+):
+    """Paramètres d'upload TUS adaptés à la qualité réseau annoncée par le client.
+
+    Le client transmet les indices ``navigator.connection`` (``effectiveType``,
+    ``downlink``, ``saveData``). Le serveur calcule la taille de chunk avec le
+    plancher mobile faisant autorité (:data:`CHUNK_SIZE_FLOOR`) : même si le
+    client oublie de brider, le serveur ne descend jamais sous le plancher et ne
+    dépasse jamais le plafond. Retourne aussi le backoff de retry et la limite de
+    concurrence à appliquer côté @uppy/tus.
+    """
+    chunk_size = select_adaptive_chunk_size(effective_type=effective_type, downlink=downlink, save_data=save_data)
+    return JSONResponse(
+        content={
+            "chunk_size": chunk_size,
+            "chunk_size_floor": CHUNK_SIZE_FLOOR,
+            "chunk_size_ceiling": CHUNK_SIZE_CEILING,
+            "retry_delays": TUS_RETRY_DELAYS,
+            "limit": 1,
+        }
+    )
+
+
+@router.get("/processing_status/{album_id}")
+async def processing_status(
+    album_id: int,
+    db: db_dependency,
+    current_user: dict = Depends(get_current_user),
+):
+    """Statut durable de traitement post-upload par fichier (condition UPL-01).
+
+    Permet à l'UI de savoir si la vignette d'un fichier « uploadé » (204) a bien
+    été générée, ou si le traitement est en cours / a échoué. Sans cet endpoint,
+    un échec de vignette dans le pool restait invisible pour l'utilisateur.
+    """
+    album = crud.get_album_by_id(db, album_id=album_id)
+    if album is None:
+        raise HTTPException(status_code=404, detail="L'album n'existe pas")
+
+    # Contrôle d'accès : superuser, ou accès à l'album (direct/groupe).
+    user_id = current_user.get("id")
+    is_superuser = current_user.get("is_superuser", False)
+    if not is_superuser and not verify_album_access(db, user_id, album_id):
+        raise HTTPException(status_code=403, detail="Vous n'avez pas accès à cet album")
+
+    entrees = crud.get_image_processing_status_by_album(db, album_id)
+    fichiers = [
+        {
+            "filename": e.filename,
+            "media_type": e.media_type,
+            "status": e.status,
+            "detail": e.detail,
+            "updated_at": e.updated_at,
+        }
+        for e in entrees
+    ]
+    # Résumé agrégé : métrique de fiabilité exploitable par l'UI (condition
+    # product-owner : rendre visible le succès/échec du post-traitement).
+    resume = {"pending": 0, "processing": 0, "success": 0, "failed": 0, "skipped": 0}
+    for f in fichiers:
+        if f["status"] in resume:
+            resume[f["status"]] += 1
+    return JSONResponse(content={"album_id": album_id, "summary": resume, "files": fichiers})
 
 
 @router.get("/get_random_image/{album_id}")
@@ -426,8 +504,15 @@ async def upload_images(
     files: list[UploadFile] = File(...),
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Upload multiple images/videos dans un album.
+    """[DÉPRÉCIÉ — repli] Upload multipart XHR hérité dans un album (TODO #395).
+
+    Le chemin d'upload par défaut est désormais TUS resumable + golden-retriever
+    (voir ``/be_resizer/tus`` et ``frontend/templates/album_upload.html``), plus
+    fiable sur réseau mobile/instable. Cet endpoint est conservé UNIQUEMENT comme
+    repli explicite, activable par configuration (``LEGACY_XHR_UPLOAD``,
+    condition architecte/sécurité UPL-06). Quand il est désactivé, il répond
+    ``410 Gone``.
+
     - Vérifie que l'utilisateur a accès à l'album
     - Valide la taille des fichiers (30 MB images, 500 MB vidéos, 2 GB total)
     - Sauvegarde les fichiers originaux dans le dossier images de l'album
@@ -436,6 +521,16 @@ async def upload_images(
 
     Formats supportés : jpg, jpeg, png, gif, heic, webp, mp4, avi, mov, mkv, webm
     """
+    # Retrait du chemin XHR hérité par défaut (TODO #395) : disponible uniquement
+    # en repli explicite via configuration.
+    if not app_config.legacy_xhr_upload_enabled():
+        logger.warning("Tentative d'upload via l'endpoint XHR hérité désactivé (LEGACY_XHR_UPLOAD=false)")
+        raise HTTPException(
+            status_code=410,
+            detail="L'upload multipart hérité est désactivé. Utilisez l'upload résumable TUS.",
+        )
+    logger.info("Upload via l'endpoint XHR hérité (déprécié, repli) — préférer TUS resumable")
+
     # Vérifier que l'album existe
     album = crud.get_album_by_id(db, album_id=album_id)
     if album is None:
@@ -666,17 +761,207 @@ async def delete_image(album_id: int, filename: str, db: db_dependency):
 ##################################################################
 
 import shutil
-import threading
 from collections.abc import Callable
 
 from tuspyserver import create_tus_router
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Fiabilité upload — Phase 2 (conditions architecte / product-owner)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Plancher de taille de chunk (256 KB). Valeur imposée par un incident réel :
+# des PATCH de 2 MB étaient silencieusement coupés entre Edge Android et Caddy
+# (logs prod 2026-04-27). Le dimensionnement adaptatif NE DESCEND JAMAIS sous ce
+# plancher, quelle que soit la qualité réseau annoncée par le client.
+CHUNK_SIZE_FLOOR = 256 * 1024
+# Plafond de chunk sur très bon lien : au-delà, le gain de round-trips devient
+# marginal et le coût d'un échec de PATCH (à ré-émettre) augmente.
+CHUNK_SIZE_CEILING = 8 * 1024 * 1024
+# Backoff de retry TUS partagé client/serveur (aligné sur album_upload.html).
+TUS_RETRY_DELAYS = [0, 1000, 3000, 5000, 10000, 20000, 40000, 60000]
+
+# Pool de threads BORNÉ pour la génération de vignettes post-upload (condition
+# architecte UPL-02). Remplace le spawn illimité de threads daemon : au plus
+# ``max_thumbnail_workers`` traitements PIL/OpenCV s'exécutent en parallèle, le
+# reste est mis en file d'attente. La charge CPU/mémoire reste ainsi maîtrisée
+# même en cas de rafale d'uploads.
+_THUMBNAIL_POOL = ThreadPoolExecutor(
+    max_workers=image_config.max_thumbnail_workers,
+    thread_name_prefix="tus-thumb",
+)
+
+
+def _media_type_for(nom_fichier: str) -> str:
+    """Déduit le type de média d'un nom de fichier : ``image``, ``video`` ou ``unknown``."""
+    nom_lower = (nom_fichier or "").lower()
+    if nom_lower.endswith(IMAGE_EXTENSIONS):
+        return "image"
+    if nom_lower.endswith(VIDEO_EXTENSIONS):
+        return "video"
+    return "unknown"
+
+
+def select_adaptive_chunk_size(
+    effective_type: str | None = None,
+    downlink: float | None = None,
+    save_data: bool = False,
+) -> int:
+    """Choisit une taille de chunk TUS adaptée à la qualité du réseau client.
+
+    Le client transmet les indices de l'API ``navigator.connection`` (Network
+    Information API) : ``effectiveType`` (``slow-2g``/``2g``/``3g``/``4g``),
+    ``downlink`` (Mbit/s estimés) et ``saveData`` (mode économie de données).
+
+    Règle : petit chunk sur lien contraint (fiabilité mobile), plus gros sur bon
+    lien (moins de round-trips). Le résultat est TOUJOURS borné entre
+    :data:`CHUNK_SIZE_FLOOR` (plancher mobile imposé par incident) et
+    :data:`CHUNK_SIZE_CEILING`.
+
+    :param effective_type: type de connexion effective annoncé par le navigateur
+    :param downlink: bande passante descendante estimée en Mbit/s
+    :param save_data: True si l'utilisateur a activé le mode économie de données
+    :return: taille de chunk en octets, jamais inférieure au plancher
+    """
+    # Le mode « économie de données » ou un lien 2G impose le plancher.
+    if save_data:
+        return CHUNK_SIZE_FLOOR
+
+    type_normalise = (effective_type or "").lower().strip()
+    base_par_type = {
+        "slow-2g": CHUNK_SIZE_FLOOR,
+        "2g": CHUNK_SIZE_FLOOR,
+        "3g": 512 * 1024,
+        "4g": 2 * 1024 * 1024,
+        "5g": 4 * 1024 * 1024,
+    }
+    taille = base_par_type.get(type_normalise, CHUNK_SIZE_FLOOR)
+
+    # Affinage optionnel via le débit estimé : ~0.5 MB de chunk par Mbit/s,
+    # ce qui garde un PATCH sous ~1 s même sur lien moyen.
+    if downlink is not None and downlink > 0:
+        taille_debit = int(downlink * 512 * 1024)
+        taille = max(taille, taille_debit)
+
+    # Bornage strict : jamais sous le plancher mobile, jamais au-dessus du plafond.
+    return max(CHUNK_SIZE_FLOOR, min(taille, CHUNK_SIZE_CEILING))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Durcissement upload (condition sécurité — tranche Phase 1)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+# Signatures « magic bytes » par extension autorisée. On lit le début du fichier
+# et on vérifie que le contenu correspond réellement au type annoncé par
+# l'extension (défense contre un fichier renommé, ex. script.php -> photo.jpg).
+def _magic_jpeg(h: bytes) -> bool:
+    return h[:3] == b"\xff\xd8\xff"
+
+
+def _magic_png(h: bytes) -> bool:
+    return h[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def _magic_gif(h: bytes) -> bool:
+    return h[:6] in (b"GIF87a", b"GIF89a")
+
+
+def _magic_webp(h: bytes) -> bool:
+    return h[:4] == b"RIFF" and h[8:12] == b"WEBP"
+
+
+def _magic_avi(h: bytes) -> bool:
+    return h[:4] == b"RIFF" and h[8:12] == b"AVI "
+
+
+def _magic_isobmff(h: bytes) -> bool:
+    # HEIC / MP4 / MOV : boîte 'ftyp' aux octets 4-8 (ISO Base Media File Format).
+    return h[4:8] == b"ftyp"
+
+
+def _magic_matroska(h: bytes) -> bool:
+    # MKV / WEBM : conteneur EBML.
+    return h[:4] == b"\x1aE\xdf\xa3"
+
+
+_MAGIC_VALIDATORS: dict[str, Callable[[bytes], bool]] = {
+    "jpg": _magic_jpeg,
+    "jpeg": _magic_jpeg,
+    "png": _magic_png,
+    "gif": _magic_gif,
+    "webp": _magic_webp,
+    "heic": _magic_isobmff,
+    "mp4": _magic_isobmff,
+    "mov": _magic_isobmff,
+    "avi": _magic_avi,
+    "mkv": _magic_matroska,
+    "webm": _magic_matroska,
+}
+
+
+def sanitize_upload_filename(nom_origine: str) -> str | None:
+    """Nettoie et valide un nom de fichier d'upload (anti path-traversal).
+
+    - rejette les octets nuls, les séparateurs de chemin et ``..``
+    - rejette les chemins absolus
+    - réduit au nom de base et remplace les caractères non sûrs
+    - conserve une extension simple
+
+    :param nom_origine: nom de fichier envoyé par le client
+    :return: nom sécurisé, ou ``None`` si le nom est refusé
+    """
+    if not nom_origine or "\x00" in nom_origine:
+        return None
+
+    # Un nom d'upload ne doit jamais contenir de composant de chemin.
+    if "/" in nom_origine or "\\" in nom_origine or os.path.isabs(nom_origine):
+        return None
+
+    # Réduire au nom de base (défense supplémentaire) et refuser . / ..
+    nom_base = os.path.basename(nom_origine)
+    if nom_base in ("", ".", "..") or ".." in nom_base:
+        return None
+
+    # Remplacer les espaces (comportement historique) et neutraliser les
+    # caractères non alphanumériques hors point/tiret/underscore.
+    nom_base = nom_base.replace(" ", "_")
+    nom_securise = re.sub(r"[^A-Za-z0-9._-]", "_", nom_base)
+
+    # Refuser les noms devenus vides ou sans base avant l'extension.
+    if not nom_securise or nom_securise.startswith("."):
+        return None
+
+    return nom_securise
+
+
+def _validate_magic_bytes(chemin: str, nom_securise: str) -> bool:
+    """Vérifie que le contenu du fichier correspond à l'extension annoncée.
+
+    :param chemin: chemin du fichier temporaire à inspecter
+    :param nom_securise: nom de fichier sécurisé (pour l'extension)
+    :return: True si la signature correspond (ou extension sans validateur connu)
+    """
+    ext = nom_securise.rsplit(".", 1)[-1].lower() if "." in nom_securise else ""
+    validateur = _MAGIC_VALIDATORS.get(ext)
+    if validateur is None:
+        # Extension autorisée par allowed_file mais sans signature connue : on
+        # laisse passer (le contrôle d'extension a déjà eu lieu en amont).
+        return True
+    try:
+        with open(chemin, "rb") as fh:
+            entete = fh.read(16)
+    except OSError as exc:
+        logger.warning(f"Lecture impossible pour validation magic bytes {chemin}: {exc}")
+        return False
+    return validateur(entete)
 
 
 def _integrer_fichier_tus(album, chemin_source: str, nom_origine: str) -> dict:
     """Intègre un fichier uploadé via TUS dans le dossier de l'album.
 
+    - Nettoie et valide le nom (anti path-traversal)
     - Vérifie l'extension
-    - Sécurise le nom (espaces -> underscores)
+    - Vérifie la signature « magic bytes » (contenu vs extension)
     - Refuse les doublons (fichier déjà présent)
     - Génère la vignette (image PIL ou vidéo OpenCV)
     - Déplace le fichier source du dossier temporaire TUS vers le dossier album
@@ -692,16 +977,33 @@ def _integrer_fichier_tus(album, chemin_source: str, nom_origine: str) -> dict:
     if not nom_origine:
         return {"status": "error", "filename": "", "error": "Nom de fichier manquant"}
 
-    if not allowed_file(nom_origine):
+    # Anti path-traversal : nettoyer et valider le nom AVANT toute construction de chemin.
+    nom_securise = sanitize_upload_filename(nom_origine)
+    if nom_securise is None:
+        logger.warning(f"Nom de fichier upload refusé (path-traversal / invalide): {nom_origine!r}")
+        return {"status": "error", "filename": nom_origine, "error": "Nom de fichier invalide"}
+
+    if not allowed_file(nom_securise):
         return {"status": "skipped", "filename": nom_origine, "error": "Format non supporté"}
+
+    # Validation du contenu réel (magic bytes) contre l'extension annoncée.
+    if not _validate_magic_bytes(chemin_source, nom_securise):
+        logger.warning(f"Contenu incohérent avec l'extension pour {nom_origine!r} (magic bytes)")
+        return {"status": "error", "filename": nom_origine, "error": "Contenu de fichier invalide"}
 
     # Préparer les dossiers de l'album
     img_path, tb_path = get_album_paths(album)
     os.makedirs(img_path, exist_ok=True)
     os.makedirs(tb_path, exist_ok=True)
 
-    nom_securise = nom_origine.replace(" ", "_")
     chemin_destination = os.path.join(img_path, nom_securise)
+
+    # Défense en profondeur : la destination doit rester DANS le dossier de l'album.
+    racine_album = os.path.realpath(img_path)
+    dest_reelle = os.path.realpath(chemin_destination)
+    if os.path.commonpath([racine_album, dest_reelle]) != racine_album:
+        logger.error(f"Chemin de destination hors du dossier album refusé: {dest_reelle}")
+        return {"status": "error", "filename": nom_origine, "error": "Chemin de destination invalide"}
 
     if os.path.exists(chemin_destination):
         return {"status": "skipped", "filename": nom_origine, "error": "Fichier déjà existant"}
@@ -746,6 +1048,65 @@ def _integrer_fichier_tus(album, chemin_source: str, nom_origine: str) -> dict:
         logger.warning(f"Erreur création vignette (TUS) pour {nom_securise}: {exc}")
 
     return {"status": "success", "filename": nom_securise}
+
+
+def _finalize_tus_file(db, album, chemin_fichier: str, nom_origine: str) -> dict:
+    """Cœur testable de la finalisation TUS : traitement + statut durable.
+
+    Marque le fichier ``processing``, exécute l'intégration (déplacement +
+    génération de vignette via :func:`_integrer_fichier_tus`), puis enregistre le
+    statut durable final (``success`` / ``skipped`` / ``failed``). La clé du
+    statut est toujours le nom sécurisé, pour rester cohérente avec la ligne
+    ``pending`` écrite dans le chemin de la requête.
+
+    :param db: session de base de données (ouverte par l'appelant)
+    :param album: objet Album cible
+    :param chemin_fichier: chemin du fichier temporaire TUS
+    :param nom_origine: nom d'origine envoyé par le client
+    :return: dict résultat de :func:`_integrer_fichier_tus`
+    """
+    nom_securise = sanitize_upload_filename(nom_origine) or nom_origine
+    crud.set_image_processing_status(db, album.id, nom_securise, "processing", None)
+    resultat = _integrer_fichier_tus(album, chemin_fichier, nom_origine)
+    statut = resultat.get("status", "error")
+    # Le statut interne « error » est exposé « failed » côté statut durable.
+    statut_durable = "failed" if statut == "error" else statut
+    crud.set_image_processing_status(db, album.id, nom_securise, statut_durable, resultat.get("error"))
+    return resultat
+
+
+def _run_tus_finalize(album_id: int, chemin_fichier: str, nom_origine: str) -> None:
+    """Tâche exécutée dans le pool borné : ouvre sa session, finalise, nettoie.
+
+    La session de la requête étant fermée après le 204, on ouvre ici une session
+    dédiée (``SessionLocal``). Nettoie enfin le fichier source résiduel et le
+    ``.info`` produit par tuspyserver.
+    """
+    db = SessionLocal()
+    nom_securise = sanitize_upload_filename(nom_origine) or nom_origine
+    try:
+        album = crud.get_album_by_id(db, album_id=album_id)
+        if album is None:
+            logger.error(f"TUS finalize: album {album_id} introuvable")
+            crud.set_image_processing_status(db, album_id, nom_securise, "failed", "Album introuvable")
+            return
+        resultat = _finalize_tus_file(db, album, chemin_fichier, nom_origine)
+        logger.info(f"TUS upload terminé pour album {album_id}: {resultat}")
+    except Exception as exc:
+        logger.error(f"TUS traitement pool échoué pour {nom_origine}: {exc}")
+        try:
+            crud.set_image_processing_status(db, album_id, nom_securise, "failed", str(exc))
+        except Exception:
+            logger.exception("TUS: échec d'enregistrement du statut d'erreur")
+    finally:
+        chemin_info = chemin_fichier + ".info"
+        for chemin in (chemin_fichier, chemin_info):
+            if os.path.exists(chemin):
+                try:
+                    os.remove(chemin)
+                except OSError as exc:
+                    logger.warning(f"Impossible de supprimer {chemin}: {exc}")
+        db.close()
 
 
 def _tus_hook_pre_creation(
@@ -819,34 +1180,28 @@ def _tus_hook_upload_complete(
 
         nom_origine = metadata.get("filename") or metadata.get("name") or os.path.basename(chemin_fichier)
 
-        # IMPORTANT : on traite l'intégration (move + génération vignette) dans un
-        # thread d'arrière-plan pour libérer immédiatement le worker FastAPI et
-        # rendre le 204 No Content au client. Sans ça, sur réseau mobile le
-        # navigateur voit la requête pendre pendant la création de la vignette PIL
-        # (3-15 s par photo) et l'opérateur coupe la connexion TCP au bout de
-        # ~10 s -> erreur Uppy "looks like a network error" sur les fichiers suivants.
-        def _tache_arriere_plan() -> None:
-            try:
-                resultat = _integrer_fichier_tus(album, chemin_fichier, nom_origine)
-                logger.info(f"TUS upload terminé pour album {album_id}: {resultat}")
-            except Exception as exc:
-                logger.error(f"TUS traitement arrière-plan échoué pour {nom_origine}: {exc}")
-            finally:
-                # Nettoyer les fichiers résiduels (.info produit par tuspyserver,
-                # source si _integrer_fichier_tus a échoué avant le shutil.move)
-                chemin_info = chemin_fichier + ".info"
-                for chemin in (chemin_fichier, chemin_info):
-                    if os.path.exists(chemin):
-                        try:
-                            os.remove(chemin)
-                        except OSError as exc:
-                            logger.warning(f"Impossible de supprimer {chemin}: {exc}")
+        # Statut durable AVANT tout traitement asynchrone (condition architecte
+        # UPL-01). On écrit une ligne « pending » avec la session de la requête
+        # (déjà ouverte, engagement immédiat) : si le process redémarre pendant la
+        # génération de vignette, l'enregistrement reste visible (pending/
+        # processing) et l'UI peut le signaler — plus d'orphelin silencieux.
+        nom_securise = sanitize_upload_filename(nom_origine) or nom_origine
+        media_type = _media_type_for(nom_securise)
+        try:
+            crud.upsert_image_processing_pending(db, album_id, nom_securise, media_type)
+        except Exception as exc:
+            # L'échec d'écriture du statut ne doit jamais bloquer l'upload lui-même.
+            logger.error(f"TUS statut pending non enregistré pour {nom_securise}: {exc}")
 
-        threading.Thread(
-            target=_tache_arriere_plan,
-            name=f"tus-finalize-{album_id}-{nom_origine}",
-            daemon=True,
-        ).start()
+        # IMPORTANT : la génération de vignette (PIL/OpenCV, 3-15 s par photo) est
+        # confiée à un POOL DE THREADS BORNÉ pour libérer immédiatement le worker
+        # FastAPI et rendre le 204 No Content au client. Sans ça, sur réseau mobile
+        # le navigateur voit la requête pendre pendant la création de la vignette et
+        # l'opérateur coupe la connexion TCP au bout de ~10 s -> erreur Uppy "looks
+        # like a network error" sur les fichiers suivants. Le pool borné
+        # (image_config.max_thumbnail_workers) remplace le spawn illimité de threads
+        # daemon (condition architecte UPL-02).
+        _THUMBNAIL_POOL.submit(_run_tus_finalize, album_id, chemin_fichier, nom_origine)
 
     return _finaliser
 

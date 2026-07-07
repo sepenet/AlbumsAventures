@@ -1,3 +1,5 @@
+import time
+
 from sqlalchemy.orm import Session
 
 from utils.password import get_password_hash
@@ -699,3 +701,104 @@ def get_users_with_direct_album_access(db: Session, album_id: int):
         .all()
     )
     return [{"id": r.id, "firstname": r.firstname, "lastname": r.lastname, "email": r.email} for r in result]
+
+
+##################################################################
+# Statut durable de traitement post-upload (UPL-01)
+# Réutilise la base existante — aucune infrastructure supplémentaire.
+
+
+def upsert_image_processing_pending(db: Session, album_id: int, filename: str, media_type: str):
+    """Crée (ou réinitialise) l'enregistrement de statut d'un fichier en ``pending``.
+
+    Appelé de façon synchrone dans le chemin de la requête TUS, AVANT de confier
+    la génération de vignette au pool de threads. La ligne est donc persistée
+    durablement : un crash/redémarrage du process laisse une trace ``pending``
+    plutôt qu'un original silencieusement orphelin.
+    """
+    now = time.time()
+    entry = (
+        db.query(models.ImageProcessingStatus)
+        .filter(
+            models.ImageProcessingStatus.album_id == album_id,
+            models.ImageProcessingStatus.filename == filename,
+        )
+        .first()
+    )
+    if entry is None:
+        entry = models.ImageProcessingStatus(
+            album_id=album_id,
+            filename=filename,
+            media_type=media_type,
+            status="pending",
+            detail=None,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(entry)
+    else:
+        # Ré-upload après échec : on repart d'un état propre.
+        entry.media_type = media_type
+        entry.status = "pending"
+        entry.detail = None
+        entry.updated_at = now
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def set_image_processing_status(db: Session, album_id: int, filename: str, status: str, detail: str | None = None):
+    """Met à jour le statut de traitement d'un fichier (``processing``/``success``/...).
+
+    Idempotent : crée l'enregistrement s'il n'existe pas (robustesse en cas de
+    perte de la ligne ``pending``).
+    """
+    now = time.time()
+    entry = (
+        db.query(models.ImageProcessingStatus)
+        .filter(
+            models.ImageProcessingStatus.album_id == album_id,
+            models.ImageProcessingStatus.filename == filename,
+        )
+        .first()
+    )
+    if entry is None:
+        entry = models.ImageProcessingStatus(
+            album_id=album_id,
+            filename=filename,
+            media_type="unknown",
+            status=status,
+            detail=detail,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(entry)
+    else:
+        entry.status = status
+        entry.detail = detail
+        entry.updated_at = now
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def get_image_processing_status_by_album(db: Session, album_id: int):
+    """Retourne tous les statuts de traitement d'un album (les plus récents d'abord)."""
+    return (
+        db.query(models.ImageProcessingStatus)
+        .filter(models.ImageProcessingStatus.album_id == album_id)
+        .order_by(models.ImageProcessingStatus.updated_at.desc())
+        .all()
+    )
+
+
+def get_image_processing_entry(db: Session, album_id: int, filename: str):
+    """Retourne l'enregistrement de statut d'un fichier précis, ou ``None``."""
+    return (
+        db.query(models.ImageProcessingStatus)
+        .filter(
+            models.ImageProcessingStatus.album_id == album_id,
+            models.ImageProcessingStatus.filename == filename,
+        )
+        .first()
+    )

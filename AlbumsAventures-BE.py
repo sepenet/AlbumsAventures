@@ -21,7 +21,6 @@ import logging
 import os
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.db import models
@@ -37,7 +36,9 @@ from backend.db.db_fill import (
 )
 from backend.routers import be_album, be_auth, be_category, be_formatter, be_group, be_resizer, be_user
 from frontend.routers import fe_router
+from frontend.spa_serving import configure_spa
 from utils.config import image, logging_config
+from utils.security import configure_cors, configure_security
 
 # Patch Windows tuspyserver (os.rename -> os.replace pour les fichiers .info)
 # À faire après l'import de be_resizer (qui charge tuspyserver).
@@ -96,28 +97,14 @@ async def lifespan(app: FastAPI):
 # create the app fastapi
 app = FastAPI(lifespan=lifespan)
 
-# on ajoute les origines autorisées pour les requêtes, pour eviter les CORS errors
-origins = [
-    "http://localhost:5003",
-]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    # Headers TUS exposés au client (requis pour @uppy/tus, voir TODO #391/#392)
-    expose_headers=[
-        "Location",
-        "Upload-Offset",
-        "Upload-Length",
-        "Upload-Expires",
-        "Tus-Resumable",
-        "Tus-Version",
-        "Tus-Extension",
-        "Tus-Max-Size",
-    ],
-)
+# Sécurité HTTP centralisée (identique entre l'app de prod et l'app de test) :
+#   • CORS piloté par config (jamais wildcard avec allow_credentials)
+#   • En-têtes de sécurité + CSP sur toutes les réponses
+#   • Durcissement transport (redirection HTTPS + HSTS + TrustedHost) en production
+# Voir utils/security.py.
+configure_cors(app)
+configure_security(app)
+
 # include the routers qui sont divisés en plusieurs fichiers pour plus de clarté
 app.include_router(be_album.router)
 app.include_router(be_album.public_router)  # Router public pour les albums partagés
@@ -138,6 +125,11 @@ app.mount("/thumbnails", StaticFiles(directory=image.thumbnails_path), name="thu
 
 # on monte le dossier images externe pour servir les images full-size
 app.mount("/images", StaticFiles(directory=image.image_path), name="images")
+
+# SPA React (Phase 3) servie same-origin sous /app, APRÈS tous les routers et
+# mounts média : la route de repli /app/{path} ne masque donc jamais /be_*,
+# /be_resizer/tus/, /images, /thumbnails ou /static (voir frontend/spa_serving.py).
+configure_spa(app)
 
 if __name__ == "__main__":
     import uvicorn

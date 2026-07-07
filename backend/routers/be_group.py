@@ -6,12 +6,18 @@ from utils.email import send_new_album_access_email, send_new_group_access_email
 
 from ..db import crud, schemas
 from ..db.db_connect import db_dependency
-from .be_auth import get_current_user
+from .be_auth import get_current_user, require_superuser
 from .be_formatter import build_cover_url
 
 logger = logging.getLogger(__name__)
 
 # check user.py for more comments on the following line
+# Le routeur exige une session valide sur TOUTES les routes (lecture comprise).
+# Les routes qui MODIFIENT l'état (create/update/delete, gestion des membres et
+# des albums) ajoutent en plus ``Depends(require_superuser)`` au niveau de la
+# route : la garde superuser est ainsi appliquée côté serveur (OWASP A01), sans
+# dépendre du masquage des boutons côté client. Un utilisateur authentifié mais
+# non-administrateur reçoit alors un 403 sur ces mutations.
 router = APIRouter(prefix="/be_group", tags=["backend_group"], dependencies=[Depends(get_current_user)])
 
 
@@ -38,7 +44,7 @@ def get_group_by_name(group_name: str, db: db_dependency):
     return group
 
 
-@router.post("/create_group/", response_model=schemas.Group)
+@router.post("/create_group/", response_model=schemas.Group, dependencies=[Depends(require_superuser)])
 def create_group(db: db_dependency, group: schemas.GroupCreate):
     """
     Fonction pour créer un groupe.
@@ -50,7 +56,7 @@ def create_group(db: db_dependency, group: schemas.GroupCreate):
     return crud.create_group(db, group)
 
 
-@router.put("/update_group/{group_id}", response_model=schemas.Group)
+@router.put("/update_group/{group_id}", response_model=schemas.Group, dependencies=[Depends(require_superuser)])
 def update_group(group_id: int, group_update: schemas.GroupUpdate, db: db_dependency):
     """
     Mise à jour d'un groupe (Tâche 270).
@@ -70,7 +76,7 @@ def update_group(group_id: int, group_update: schemas.GroupUpdate, db: db_depend
     return updated_group
 
 
-@router.delete("/delete_group/{group_id}")
+@router.delete("/delete_group/{group_id}", dependencies=[Depends(require_superuser)])
 def delete_group(group_id: int, db: db_dependency):
     """
     Suppression d'un groupe (Tâche 270).
@@ -83,7 +89,7 @@ def delete_group(group_id: int, db: db_dependency):
 
 
 # creation d'un lien utilisateur-groupe
-@router.post("/create_user_group/", response_model=schemas.User_Group)
+@router.post("/create_user_group/", response_model=schemas.User_Group, dependencies=[Depends(require_superuser)])
 def create_user_group(db: db_dependency, user_group: schemas.User_GroupCreate):
     """
     Fonction pour créer un lien entre un utilisateur et un groupe.
@@ -105,7 +111,7 @@ def create_user_group(db: db_dependency, user_group: schemas.User_GroupCreate):
 
 
 # creation de plusieurs liens utilisateurs-groupe (multi-sélection)
-@router.post("/create_users_group_bulk/")
+@router.post("/create_users_group_bulk/", dependencies=[Depends(require_superuser)])
 def create_users_group_bulk(db: db_dependency, request: schemas.User_GroupBulkCreate):
     """
     Crée plusieurs liens utilisateur-groupe en une seule requête.
@@ -138,7 +144,7 @@ def create_users_group_bulk(db: db_dependency, request: schemas.User_GroupBulkCr
 
 
 # creation d'un lien album-groupe
-@router.post("/create_album_group/", response_model=schemas.Album_Group)
+@router.post("/create_album_group/", response_model=schemas.Album_Group, dependencies=[Depends(require_superuser)])
 def create_album_group(db: db_dependency, album_group: schemas.Album_GroupCreate):
     """
     Fonction pour créer un lien entre un album et un groupe.
@@ -146,7 +152,7 @@ def create_album_group(db: db_dependency, album_group: schemas.Album_GroupCreate
     return crud.create_album_group(db, album_group)
 
 
-@router.post("/create_album_groups_bulk/")
+@router.post("/create_album_groups_bulk/", dependencies=[Depends(require_superuser)])
 def create_album_groups_bulk(request: schemas.Album_GroupsBulkCreate, db: db_dependency):
     """
     Crée plusieurs liens (album_id -> group_ids) en une seule opération.
@@ -157,7 +163,7 @@ def create_album_groups_bulk(request: schemas.Album_GroupsBulkCreate, db: db_dep
 
 
 # creation de plusieurs liens albums-groupe (multi-sélection)
-@router.post("/create_albums_group_bulk/")
+@router.post("/create_albums_group_bulk/", dependencies=[Depends(require_superuser)])
 def create_albums_group_bulk(db: db_dependency, request: schemas.Album_GroupBulkCreate):
     """
     Crée plusieurs liens album-groupe en une seule requête.
@@ -294,7 +300,7 @@ def get_all_albums_simple(db: db_dependency):
     return albums
 
 
-@router.delete("/delete_user_group/{user_id}/{group_id}")
+@router.delete("/delete_user_group/{user_id}/{group_id}", dependencies=[Depends(require_superuser)])
 def delete_user_group_link(user_id: int, group_id: int, db: db_dependency):
     """
     Supprime le lien entre un utilisateur et un groupe.
@@ -305,7 +311,7 @@ def delete_user_group_link(user_id: int, group_id: int, db: db_dependency):
     return {"message": "Lien supprimé avec succès", "user_id": user_id, "group_id": group_id}
 
 
-@router.delete("/delete_album_group/{album_id}/{group_id}")
+@router.delete("/delete_album_group/{album_id}/{group_id}", dependencies=[Depends(require_superuser)])
 def delete_album_group_link(album_id: int, group_id: int, db: db_dependency):
     """
     Supprime le lien entre un album et un groupe.
@@ -376,7 +382,7 @@ def get_album_groups(album_id: int, db: db_dependency):
     return groups
 
 
-@router.post("/create_user_album/")
+@router.post("/create_user_album/", dependencies=[Depends(require_superuser)])
 def create_user_album_link(db: db_dependency, user_album: schemas.User_AlbumCreate):
     """
     Crée un lien direct entre un utilisateur et un album.
@@ -401,7 +407,7 @@ def create_user_album_link(db: db_dependency, user_album: schemas.User_AlbumCrea
 
 
 # creation de plusieurs accès directs utilisateurs-album (multi-sélection)
-@router.post("/create_users_album_bulk/")
+@router.post("/create_users_album_bulk/", dependencies=[Depends(require_superuser)])
 def create_users_album_bulk(db: db_dependency, request: schemas.User_AlbumBulkCreate):
     """
     Crée plusieurs liens directs utilisateur-album en une seule requête.
@@ -437,7 +443,7 @@ def create_users_album_bulk(db: db_dependency, request: schemas.User_AlbumBulkCr
     return {"album_id": request.album_id, "created": created, "skipped": skipped}
 
 
-@router.delete("/delete_user_album/{user_id}/{album_id}")
+@router.delete("/delete_user_album/{user_id}/{album_id}", dependencies=[Depends(require_superuser)])
 def delete_user_album_link(user_id: int, album_id: int, db: db_dependency):
     """
     Supprime le lien direct entre un utilisateur et un album.

@@ -529,6 +529,7 @@
         
         try {
           const response = await fetch(`/be_resizer/create_thumbnails/${albumId}`, {
+            method: 'POST',
             credentials: 'include'
           });
           const data = await response.json();

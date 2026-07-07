@@ -3,9 +3,10 @@ Tests fonctionnels pour l'upload d'images/vidéos (be_resizer).
 Teste les validations de taille et d'accès album.
 """
 
+import re
 from io import BytesIO
+from pathlib import Path
 
-import pytest
 from fastapi import status
 
 
@@ -55,18 +56,13 @@ class TestUploadValidation:
         # (pas une erreur d'accès 403)
         assert response.status_code != status.HTTP_403_FORBIDDEN
 
-    @pytest.mark.skip(reason="BUG: is_superuser n'est pas inclus dans le JWT token - voir TODO #490")
     def test_upload_superuser_bypasses_access_check(self, client, test_album, superuser_auth_headers):
-        """Test qu'un superuser peut uploader sans lien explicite avec l'album
+        """Test qu'un superuser peut uploader sans lien explicite avec l'album (#485).
 
-        NOTE: Ce test échoue car l'information is_superuser n'est pas incluse dans le
-        token JWT (voir create_access_token dans be_auth.py). La vérification dans
-        be_resizer.py utilise current_user.get("is_superuser", False) qui retourne
-        toujours False.
-
-        Correction requise:
-        1. Ajouter is_superuser au payload du JWT dans create_access_token()
-        2. Retourner is_superuser dans get_current_user()
+        Le token JWT porte désormais la claim ``is_superuser`` (create_access_token)
+        et ``get_current_user`` l'expose. La vérification d'accès dans be_resizer
+        (``current_user.get("is_superuser", False)``) laisse donc passer le superuser
+        sans lien UserAlbum explicite : la réponse ne doit pas être 403.
         """
         # Créer un petit fichier image factice
         image_content = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + b"\x00" * 100 + b"\xff\xd9"
@@ -182,3 +178,102 @@ class TestDeleteImage:
         response = client.delete("/be_resizer/delete_image/99999/image.jpg", cookies=auth_headers["cookies"])
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+class TestUploadTemplateContract:
+    """Garde-fou léger contre la régression D1 (Phase 2).
+
+    Le crash « called-but-undefined » (une méthode appelée dans ``init()`` mais
+    jamais définie, cassant l'init Uppy sur toute la page) n'est pas détectable
+    par la suite backend, qui n'exécute pas le JavaScript du template. Ce test
+    statique vérifie, pour chaque méthode appelée sur l'objet Alpine, qu'une
+    définition correspondante existe bien. La couverture d'exécution réelle
+    (upload/reprise/statut) relève d'un test e2e Playwright — reporté à la
+    Phase 4 (durcissement e2e).
+    """
+
+    _TEMPLATE = Path(__file__).resolve().parent.parent / "frontend" / "templates" / "album_upload.html"
+
+    def _content(self):
+        return self._TEMPLATE.read_text(encoding="utf-8")
+
+    def test_called_upload_methods_are_defined(self):
+        """Chaque méthode appelée via self.<m>() doit avoir une définition."""
+        content = self._content()
+        # Méthodes invoquées sur l'objet uploadManager() (dont selectChunkSize,
+        # appelée dans init() — la cause exacte du crash D1).
+        methodes_appelees = {"selectChunkSize", "computeCompressionMetric", "startProcessingStatusPolling"}
+        for nom in methodes_appelees:
+            assert f"self.{nom}(" in content, f"Appel self.{nom}() introuvable dans le template"
+            # Définition en forme abrégée d'objet : « <nom>( ... ) { » en début de ligne.
+            assert re.search(rf"\n\s*{nom}\s*\(", content), f"Définition de {nom}() manquante (régression D1)"
+
+    def test_reliability_state_is_rendered(self):
+        """L'état de fiabilité (D4) doit être rendu dans le markup, pas seulement déclaré."""
+        content = self._content()
+        # La métrique de compression et le suivi durable doivent être surfacés.
+        assert "metrics.compressedSavedBytes" in content
+        assert "processingSummary" in content
+        assert "processingFiles" in content
+
+
+class TestCreateThumbnailsSecurity:
+    """Tests F-1 : create_thumbnails est une opération qui modifie l'état.
+
+    Correctif : l'endpoint passe de GET à POST (une écriture ne doit pas être un
+    GET, ce qui rétablit aussi la protection CSRF/SameSite) et est réservé aux
+    administrateurs côté serveur (``Depends(require_superuser)``), sans se reposer
+    sur le masquage du bouton côté client. Le travail réel de génération de
+    vignettes est simulé (monkeypatch) pour isoler la logique de sécurité.
+    """
+
+    def _stub_thumbnail_work(self, monkeypatch, tmp_path):
+        """Neutralise le travail disque : dossiers existants + génération simulée."""
+        import backend.routers.be_resizer as be_resizer
+
+        img_dir = tmp_path / "images"
+        tb_dir = tmp_path / "thumbnails"
+        img_dir.mkdir()
+        tb_dir.mkdir()
+
+        monkeypatch.setattr(be_resizer, "get_album_paths", lambda album: (str(img_dir), str(tb_dir)))
+        monkeypatch.setattr(
+            be_resizer,
+            "img_thumbnails",
+            lambda img_path, tb_path, size: {"tbn_exist": 0, "tbn_created": 0, "img_not_supported": 0},
+        )
+
+    def test_create_thumbnails_forbidden_for_normal_user(self, client, test_album, auth_headers):
+        """Un utilisateur authentifié non-admin reçoit 403 (garde côté serveur)."""
+        response = client.post(
+            f"/be_resizer/create_thumbnails/{test_album['id']}",
+            cookies=auth_headers["cookies"],
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_create_thumbnails_get_method_not_allowed(self, client, test_album, superuser_auth_headers):
+        """L'ancienne méthode GT est refusée (405) — l'écriture n'est plus un GET."""
+        response = client.get(
+            f"/be_resizer/create_thumbnails/{test_album['id']}",
+            cookies=superuser_auth_headers["cookies"],
+        )
+        assert response.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
+
+    def test_create_thumbnails_post_allowed_for_superuser(
+        self, client, test_album, superuser_auth_headers, monkeypatch, tmp_path
+    ):
+        """Un superuser peut déclencher la génération en POST (travail simulé)."""
+        self._stub_thumbnail_work(monkeypatch, tmp_path)
+
+        response = client.post(
+            f"/be_resizer/create_thumbnails/{test_album['id']}",
+            cookies=superuser_auth_headers["cookies"],
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["status"] == "success"
+
+    def test_create_thumbnails_forbidden_for_unauthenticated(self, client, test_album):
+        """Sans session, l'accès est refusé (401)."""
+        response = client.post(f"/be_resizer/create_thumbnails/{test_album['id']}")
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED

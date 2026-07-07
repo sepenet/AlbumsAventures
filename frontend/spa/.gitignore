@@ -1,0 +1,9 @@
+# Dependencies (build-time only — never committed)
+node_modules/
+
+# Vite build output (served by FastAPI from frontend/spa/dist)
+dist/
+
+# Tooling caches
+.eslintcache
+*.local
