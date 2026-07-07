@@ -1,0 +1,562 @@
+{% extends "base.html" %}
+
+{% block title %}Albums — Albums Aventures{% endblock %}
+
+{% block content %}
+<div class="py-6" x-data="albumsPage()" x-init="init()">
+
+  <!-- Filtres par catégorie avec multi-sélection (Tâche 180) -->
+  <div class="mb-4">
+    <div class="flex flex-wrap items-center gap-2">
+      <!-- Bouton "Toutes" -->
+      <button 
+        @click="selectedCategories = []"
+        :class="selectedCategories.length === 0 
+          ? 'bg-sky-600 text-white border-sky-600' 
+          : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'"
+        class="px-4 py-2 rounded-lg border transition-colors text-sm font-medium"
+      >
+        Toutes
+      </button>
+      
+      <!-- Boutons par catégorie (clic = toggle) -->
+      <template x-for="category in visibleCategories" :key="category.id">
+        <button 
+          @click="toggleCategory(category.id)"
+          :class="selectedCategories.includes(category.id) 
+            ? 'bg-sky-600 text-white border-sky-600' 
+            : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'"
+          class="px-4 py-2 rounded-lg border transition-colors text-sm font-medium flex items-center gap-1"
+        >
+          <span x-text="category.category"></span>
+          <svg x-show="selectedCategories.includes(category.id)" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+          </svg>
+        </button>
+      </template>
+      
+      <!-- Indicateur du nombre de catégories sélectionnées -->
+      <span 
+        x-show="selectedCategories.length > 0" 
+        class="text-sm text-gray-500 dark:text-gray-400 ml-2"
+        x-text="`(${selectedCategories.length} sélectionnée${selectedCategories.length > 1 ? 's' : ''})`"
+      ></span>
+    </div>
+  </div>
+
+  <!-- Modal d'association utilisateurs / groupes (superuser) -->
+  <div x-show="associateModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center px-4">
+    <div class="absolute inset-0 bg-black/50" @click="closeAssociateModal()"></div>
+    <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-lg w-full max-w-3xl p-4">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Associer l'album</h3>
+        <button @click="closeAssociateModal()" class="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
+      </div>
+
+      <div class="flex gap-2 mb-4">
+        <button :class="activeAssocTab === 'users' ? 'bg-sky-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'" @click="activeAssocTab='users'" class="px-3 py-2 rounded">Utilisateurs</button>
+        <button :class="activeAssocTab === 'groups' ? 'bg-sky-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'" @click="activeAssocTab='groups'" class="px-3 py-2 rounded">Groupes</button>
+      </div>
+
+      <div class="max-h-64 overflow-auto border border-gray-200 dark:border-gray-700 rounded p-2 mb-4">
+        <template x-if="loadingAssociations">
+          <div class="text-center text-sm text-gray-500">Chargement...</div>
+        </template>
+
+        <template x-if="!loadingAssociations && activeAssocTab === 'users'">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <template x-for="u in users" :key="u.id">
+              <label class="flex items-center gap-2 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer">
+                <input type="checkbox" :value="u.id" :checked="selectedUserIds.includes(u.id)" @change="toggleUser(u.id)" class="w-4 h-4" />
+                <span x-text="u.firstname + ' ' + u.lastname"></span>
+              </label>
+            </template>
+          </div>
+        </template>
+
+        <template x-if="!loadingAssociations && activeAssocTab === 'groups'">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <template x-for="g in groups" :key="g.id">
+              <label class="flex items-center gap-2 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer">
+                <input type="checkbox" :value="g.id" :checked="selectedGroupIds.includes(g.id)" @change="toggleGroup(g.id)" class="w-4 h-4" />
+                <span x-text="g.name"></span>
+              </label>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <div class="flex justify-end gap-2">
+        <button @click="closeAssociateModal()" class="px-4 py-2 bg-gray-200 dark:bg-gray-700 rounded">Annuler</button>
+        <button @click="submitAssociations()" class="px-4 py-2 bg-sky-600 text-white rounded">Valider</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notification -->
+  <div x-show="toast.show" 
+       x-transition:enter="transition ease-out duration-300"
+       x-transition:enter-start="opacity-0 transform translate-y-2"
+       x-transition:enter-end="opacity-100 transform translate-y-0"
+       x-transition:leave="transition ease-in duration-200"
+       x-transition:leave-start="opacity-100"
+       x-transition:leave-end="opacity-0"
+       :class="toast.type === 'success' ? 'bg-green-500' : 'bg-red-500'"
+       class="fixed bottom-4 right-4 px-6 py-3 text-white rounded-lg shadow-lg z-50 flex items-center gap-2">
+    <svg x-show="toast.type === 'success'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+    </svg>
+    <svg x-show="toast.type === 'error'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+    </svg>
+    <span x-text="toast.message"></span>
+  </div>
+
+  <!-- Barre de recherche + bouton création -->
+  <div class="mb-6 flex flex-col sm:flex-row gap-4">
+    <div class="relative flex-grow">
+      <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+        <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+      </div>
+      <input 
+        x-model="query" 
+        type="text"
+        placeholder="Rechercher par titre, date, participants, lieu, tags..." 
+        class="w-full pl-10 pr-4 py-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent transition duration-200"
+      />
+    </div>
+    
+    <!-- Bouton Créer un album (superusers seulement) -->
+    <template x-if="$store.auth.user?.is_superuser">
+      <a 
+        href="/album/new"
+        class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-sky-600 hover:bg-sky-700 text-white font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 whitespace-nowrap"
+      >
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+        </svg>
+        <span class="hidden sm:inline">Créer un album</span>
+        <span class="sm:hidden">Créer</span>
+      </a>
+    </template>
+  </div>
+
+  <!-- Grille d'albums : 4 colonnes PC/tablette, 1 colonne téléphone -->
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    <template x-for="album in filteredAlbums" :key="album.id">
+      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden flex flex-col">
+        
+        <!-- 1. Image de couverture (Tâche 350: lazy-loading) -->
+        <a :href="`/album/${album.id}`" 
+           class="block relative overflow-hidden aspect-square"
+           :class="album._orientation">
+          <template x-if="album.image_cover_url">
+            <img 
+              :src="album.image_cover_url" 
+              :alt="album.title" 
+              loading="lazy"
+              @load="album._orientation = $event.target.naturalHeight > $event.target.naturalWidth ? 'aspect-[3/4]' : 'aspect-video'"
+              class="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
+            />
+          </template>
+          <template x-if="!album.image_cover_url">
+            <div class="w-full h-full bg-gradient-to-br from-sky-400 to-blue-500 flex items-center justify-center">
+              <svg class="w-12 h-12 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+              </svg>
+            </div>
+          </template>
+        </a>
+
+        <!-- Contenu de la carte -->
+        <div class="p-3 flex flex-col flex-grow">
+          
+          <!-- 2. Titre -->
+          <a :href="`/album/${album.id}`" class="block">
+            <h3 class="font-semibold text-gray-900 dark:text-gray-100 truncate hover:text-sky-600 dark:hover:text-sky-400 transition-colors" x-text="album.title"></h3>
+          </a>
+          
+          <!-- 3. Date -->
+          <p class="text-sm text-gray-500 dark:text-gray-400 mt-1 flex items-center gap-1">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+            </svg>
+            <span x-text="formatDate(album.date)"></span>
+          </p>
+          
+          <!-- 4. Participants -->
+          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1 flex items-center gap-1">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+            </svg>
+            <span class="truncate" x-text="formatParticipants(album.participants)"></span>
+          </p>
+          
+          <!-- 5. Lieu (caché - utilisé pour la recherche) -->
+          <input type="hidden" :value="album.location">
+          
+          <!-- 6. Tags (caché - utilisé pour la recherche) -->
+          <input type="hidden" :value="album.tags">
+          
+          <!-- 7. Icônes d'action -->
+          <div class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+            <div class="flex flex-wrap items-center gap-2">
+              
+              <!-- Télécharger toutes les photos -->
+              <button 
+                @click="downloadAlbum(album.id)"
+                class="p-2 text-gray-500 dark:text-gray-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                title="Télécharger toutes les photos"
+              >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                </svg>
+              </button>
+              
+              <!-- Uploader de nouvelles photos (tous les utilisateurs) -->
+              <a 
+                :href="`/album/${album.id}/upload`"
+                class="p-2 text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                title="Ajouter des photos"
+              >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                </svg>
+              </a>
+              
+              <!-- Séparateur pour les actions super-utilisateur -->
+              <template x-if="$store.auth.user?.is_superuser">
+                <div class="flex items-center gap-2 ml-auto">
+                  
+                  <!-- Éditer l'album -->
+                  <a 
+                    :href="`/album/${album.id}/edit`"
+                    class="p-2 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                    title="Éditer l'album"
+                  >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                    </svg>
+                  </a>
+                  
+                  <!-- Partage temporaire -->
+                  <button 
+                    @click="shareAlbum(album.id)"
+                    class="p-2 text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                    title="Partage temporaire"
+                  >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+                    </svg>
+                  </button>
+                  
+                  <!-- Générer vignettes -->
+                  <button 
+                    @click="generateThumbnails(album.id)"
+                    class="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                    title="Générer les vignettes"
+                  >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/>
+                    </svg>
+                  </button>
+                  
+                  <!-- Supprimer l'album -->
+                  <button 
+                    @click="deleteAlbum(album.id, album.title)"
+                    class="p-2 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                    title="Supprimer l'album"
+                  >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                    </svg>
+                  </button>
+
+                  <!-- Associer l'album (super-utilisateur) -->
+                  <button
+                    @click="openAssociateModal(album.id)"
+                    x-show="$store.auth.user?.is_superuser"
+                    class="p-2 text-gray-500 dark:text-gray-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                    title="Associer l'album à utilisateurs/groupes"
+                  >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-1a4 4 0 00-3-3.87M9 20H4v-1a4 4 0 013-3.87M16 11a4 4 0 11-8 0 4 4 0 018 0z"/>
+                    </svg>
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- État vide -->
+  <div x-show="filteredAlbums.length === 0" class="text-center py-12">
+    <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+    </svg>
+    <h3 class="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">Aucun album trouvé</h3>
+    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400" x-show="query">Essayez une autre recherche.</p>
+    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400" x-show="!query">Vous n'avez pas encore d'albums accessibles.</p>
+  </div>
+
+</div>
+
+<script>
+  function albumsPage() {
+    return {
+      query: '',
+      selectedCategories: [],
+      albums: [],
+      categories: [],
+      // Association modal state
+      associateModal: false,
+      modalAlbumId: null,
+      activeAssocTab: 'users',
+      users: [],
+      groups: [],
+      selectedUserIds: [],
+      selectedGroupIds: [],
+      loadingAssociations: false,
+      toast: { show: false, message: '', type: 'success' },
+      
+      init() {
+        this.albums = {{ albums | tojson | safe }};
+        this.categories = {{ categories | tojson | safe }};
+        // TODO : supprimer ce log après débogage (5 prochaines lignes)
+        console.log('Albums chargés:', this.albums);
+        this.albums.forEach((album, index) => {
+          console.log(`Album ${index + 1}:`, album.title);
+          console.log(`  image_cover: ${album.image_cover}`);
+          console.log(`  image_cover_url: ${album.image_cover_url}`);
+        });
+      },
+      
+      // Formate les participants : DB ("|") → web (", ")
+      formatParticipants(participants) {
+        if (!participants) return 'Pas de participants';
+        return participants.split('|').join(', ');
+      },
+      
+      // Formate la date : DB → "Mois Année"
+      formatDate(dateStr) {
+        if (!dateStr) return '';
+        const moisFr = [
+          'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+          'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
+        ];
+        const date = new Date(dateStr);
+        return `${moisFr[date.getMonth()]} ${date.getFullYear()}`;
+      },
+      
+      // Date searchable pour le filtre
+      getSearchableDate(dateStr) {
+        if (!dateStr) return '';
+        const formatted = this.formatDate(dateStr).toLowerCase();
+        const date = new Date(dateStr);
+        return `${formatted} ${date.getFullYear()} ${dateStr}`;
+      },
+      
+      // Toggle une catégorie dans la sélection
+      toggleCategory(categoryId) {
+        const index = this.selectedCategories.indexOf(categoryId);
+        if (index === -1) {
+          this.selectedCategories.push(categoryId);
+        } else {
+          this.selectedCategories.splice(index, 1);
+        }
+      },
+      
+      // Albums filtrés et triés par date décroissante
+      get filteredAlbums() {
+        let albums = this.albums;
+        
+        // Filtrage par catégories (multi-sélection - Tâche 180)
+        if (this.selectedCategories.length > 0) {
+          albums = albums.filter(a => this.selectedCategories.includes(a.category_id));
+        }
+        
+        // Filtrage par recherche (titre, participants, date, lieu, tags)
+        if (this.query) {
+          const q = this.query.toLowerCase();
+          albums = albums.filter(a => {
+            const title = (a.title || '').toLowerCase();
+            const participants = (a.participants || '').toLowerCase();
+            const location = (a.location || '').toLowerCase();
+            const tags = (a.tags || '').toLowerCase();
+            const dateSearch = this.getSearchableDate(a.date);
+            return title.includes(q) || participants.includes(q) || dateSearch.includes(q) || location.includes(q) || tags.includes(q);
+          });
+        }
+        
+        // Tri par date décroissante (plus récent en haut à gauche)
+        return albums.slice().sort((a, b) => {
+          const dateA = new Date(a.date || '1900-01-01');
+          const dateB = new Date(b.date || '1900-01-01');
+          return dateB - dateA;
+        });
+      },
+
+      // Albums correspondant uniquement à la recherche (sans filtre par catégorie)
+      get albumsMatchingQuery() {
+        if (!this.query) return this.albums;
+        const q = this.query.toLowerCase();
+        return this.albums.filter(a => {
+          const title = (a.title || '').toLowerCase();
+          const participants = (a.participants || '').toLowerCase();
+          const location = (a.location || '').toLowerCase();
+          const tags = (a.tags || '').toLowerCase();
+          const dateSearch = this.getSearchableDate(a.date);
+          return title.includes(q) || participants.includes(q) || dateSearch.includes(q) || location.includes(q) || tags.includes(q);
+        });
+      },
+
+      // Catégories visibles : uniquement celles utilisées par au moins un album correspondant à la recherche
+      get visibleCategories() {
+        const used = new Set(this.albumsMatchingQuery.map(a => a.category_id));
+        return this.categories.filter(c => used.has(c.id));
+      },
+      
+      // Actions - TODO: implémenter les endpoints backend restants
+      // --- Association modal methods ---
+      async openAssociateModal(albumId) {
+        this.modalAlbumId = albumId;
+        this.associateModal = true;
+        this.activeAssocTab = 'users';
+        await this.loadAssociationLists();
+      },
+
+      closeAssociateModal() {
+        this.associateModal = false;
+        this.modalAlbumId = null;
+        this.selectedUserIds = [];
+        this.selectedGroupIds = [];
+      },
+
+      async loadAssociationLists() {
+        this.loadingAssociations = true;
+        try {
+          const [usersRes, groupsRes] = await Promise.all([
+            fetch('/be_group/get_all_users_simple/', { credentials: 'include' }),
+            fetch('/be_group/get_all_groups/', { credentials: 'include' })
+          ]);
+
+          if (usersRes.ok) this.users = await usersRes.json();
+          else this.users = [];
+
+          if (groupsRes.ok) this.groups = await groupsRes.json();
+          else this.groups = [];
+        } catch (e) {
+          console.error('Erreur chargement users/groups', e);
+          this.users = [];
+          this.groups = [];
+        } finally {
+          this.loadingAssociations = false;
+        }
+      },
+
+      toggleUser(id) {
+        const i = this.selectedUserIds.indexOf(id);
+        if (i === -1) this.selectedUserIds.push(id); else this.selectedUserIds.splice(i,1);
+      },
+
+      toggleGroup(id) {
+        const i = this.selectedGroupIds.indexOf(id);
+        if (i === -1) this.selectedGroupIds.push(id); else this.selectedGroupIds.splice(i,1);
+      },
+
+      async submitAssociations() {
+        if (!this.modalAlbumId) return;
+        // Submit users in bulk
+        if (this.selectedUserIds.length > 0) {
+          try {
+            const res = await fetch('/be_group/create_users_album_bulk/', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ album_id: this.modalAlbumId, user_ids: this.selectedUserIds })
+            });
+            if (!res.ok) throw await res.json();
+          } catch (e) {
+            this.showToast('Erreur lors de l\'association aux utilisateurs', 'error');
+            console.error(e);
+            return;
+          }
+        }
+
+        // Submit groups in bulk using new endpoint
+        if (this.selectedGroupIds.length > 0) {
+          try {
+            const res = await fetch('/be_group/create_album_groups_bulk/', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ album_id: this.modalAlbumId, group_ids: this.selectedGroupIds })
+            });
+            if (!res.ok) throw await res.json();
+          } catch (e) {
+            this.showToast('Erreur lors de l\'association aux groupes', 'error');
+            console.error(e);
+            return;
+          }
+        }
+
+        this.showToast('Associations créées');
+        this.closeAssociateModal();
+      },
+      downloadAlbum(albumId) {
+        console.log('Télécharger album:', albumId);
+        // TODO: appel API pour télécharger le ZIP de l'album
+        alert('Fonctionnalité de téléchargement bientôt disponible');
+      },
+      
+      editAlbum(albumId) {
+        window.location.href = `/album/${albumId}/edit`;
+      },
+      
+      shareAlbum(albumId) {
+        console.log('Partager album:', albumId);
+        // TODO: ouvrir modal de partage temporaire
+        alert('Fonctionnalité de partage bientôt disponible');
+      },
+      
+      async generateThumbnails(albumId) {
+        if (!confirm('Générer/régénérer les vignettes pour cet album ?')) return;
+        
+        try {
+          const response = await fetch(`/be_resizer/create_thumbnails/${albumId}`, {
+            credentials: 'include'
+          });
+          const data = await response.json();
+          
+          if (response.ok) {
+            alert(`✓ ${data.details.tbn_created} vignette(s) créée(s)\n⚠ ${data.details.tbn_exist} déjà existante(s)\n✗ ${data.details.img_not_supported} non supportée(s)`);
+          } else {
+            alert('Erreur: ' + (data.detail || 'Échec de la génération'));
+          }
+        } catch (error) {
+          alert('Erreur de connexion: ' + error.message);
+        }
+      },
+      
+      deleteAlbum(albumId, albumTitle) {
+        if (confirm(`Êtes-vous sûr de vouloir supprimer l'album "${albumTitle}" ?`)) {
+          console.log('Supprimer album:', albumId);
+          // TODO: appel API pour supprimer l'album
+        }
+      },
+
+      showToast(message, type = 'success') {
+        this.toast.message = message;
+        this.toast.type = type;
+        this.toast.show = true;
+        setTimeout(() => { this.toast.show = false; }, 3000);
+      }
+    };
+  }
+</script>
+{% endblock %}

@@ -1,0 +1,815 @@
+{% extends "base.html" %}
+
+{% block title %}{{ album.title }} — Albums Aventures{% endblock %}
+
+{% block content %}
+<!-- PhotoSwipe CSS -->
+<link rel="stylesheet" href="https://unpkg.com/photoswipe@5/dist/photoswipe.css">
+
+<div class="py-6" x-data="coverSelector()" x-init="init()">
+
+  <!-- Header avec bouton retour et infos album -->
+  <div class="mb-6">
+    <!-- Bouton retour -->
+    <a href="/" class="inline-flex items-center gap-2 text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 mb-4 transition-colors">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+      </svg>
+      <span>Retour aux albums</span>
+    </a>
+    
+    <!-- Infos album -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+      <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div class="flex-1">
+          <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-3">{{ album.title }}</h1>
+          
+          <div class="flex flex-wrap gap-4 text-sm text-gray-600 dark:text-gray-400">
+            <!-- Date -->
+            <div class="flex items-center gap-1">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+              </svg>
+              <span>{{ album.date }}</span>
+            </div>
+            
+            <!-- Participants -->
+            {% if album.participants %}
+            <div class="flex items-center gap-1">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+              </svg>
+              <span>{{ album.participants.replace('|', ', ') }}</span>
+            </div>
+            {% endif %}
+            
+            <!-- Lieu -->
+            {% if album.location %}
+            <div class="flex items-center gap-1">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+              </svg>
+              <span>{{ album.location }}</span>
+            </div>
+            {% endif %}
+            
+            <!-- Nombre d'images -->
+            <div class="flex items-center gap-1">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+              </svg>
+              <span>{{ total_images }} photo(s)</span>
+            </div>
+          </div>
+          
+          <!-- Description -->
+          {% if album.description %}
+          <p class="mt-4 text-gray-700 dark:text-gray-300">{{ album.description }}</p>
+          {% endif %}
+        </div>
+        
+        <!-- Boutons d'action -->
+        <div class="flex flex-col sm:flex-row gap-2">
+          <!-- Bouton Modifier (superusers seulement) -->
+          {% if is_superuser %}
+          <a href="/album/{{ album.id }}/edit" 
+             class="inline-flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-medium rounded-lg transition-colors shadow-md">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+            </svg>
+            Modifier
+          </a>
+          
+          <!-- Bouton Choisir couverture (superusers seulement) -->
+          <button 
+             @click="toggleSelectMode()"
+             x-show="!selectMode"
+             class="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg transition-colors shadow-md">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+            </svg>
+            Choisir couverture
+          </button>
+          
+          <!-- Bouton Associer (superusers seulement) -->
+          <button
+             @click="openAssociateModal()"
+             class="inline-flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white font-medium rounded-lg transition-colors shadow-md"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-1a4 4 0 00-3-3.87M9 20H4v-1a4 4 0 013-3.87M16 11a4 4 0 11-8 0 4 4 0 018 0z"/>
+            </svg>
+            Associer
+          </button>
+          {% endif %}
+          
+          <!-- Bouton Upload (tous les utilisateurs ayant accès) -->
+          <a href="/album/{{ album.id }}/upload" 
+             class="inline-flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors shadow-md">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+            </svg>
+            Ajouter des photos
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Barre de mode sélection couverture -->
+  <div x-show="selectMode" 
+       x-transition:enter="transition ease-out duration-200"
+       x-transition:enter-start="opacity-0 transform -translate-y-2"
+       x-transition:enter-end="opacity-100 transform translate-y-0"
+       class="mb-4 bg-purple-100 dark:bg-purple-900/30 border border-purple-300 dark:border-purple-700 rounded-lg p-4">
+    <div class="flex flex-col sm:flex-row items-center justify-between gap-3">
+      <div class="flex items-center gap-2 text-purple-800 dark:text-purple-200">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <span class="font-medium">Mode sélection :</span>
+        <span x-text="selectedImage ? 'Image sélectionnée : ' + selectedImage : 'Cliquez sur une image pour la définir comme couverture'"></span>
+      </div>
+      <div class="flex gap-2">
+        <button @click="cancelSelectMode()" 
+                class="px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-medium rounded-lg transition-colors">
+          Annuler
+        </button>
+        <button @click="confirmCover()" 
+                :disabled="!selectedImage || saving"
+                :class="selectedImage && !saving ? 'bg-purple-600 hover:bg-purple-700' : 'bg-purple-400 cursor-not-allowed'"
+                class="px-4 py-2 text-white font-medium rounded-lg transition-colors flex items-center gap-2">
+          <svg x-show="saving" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <span x-text="saving ? 'Enregistrement...' : 'Confirmer'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notification -->
+  <div x-show="toast.show" 
+       x-transition:enter="transition ease-out duration-300"
+       x-transition:enter-start="opacity-0 transform translate-y-2"
+       x-transition:enter-end="opacity-100 transform translate-y-0"
+       x-transition:leave="transition ease-in duration-200"
+       x-transition:leave-start="opacity-100"
+       x-transition:leave-end="opacity-0"
+       :class="toast.type === 'success' ? 'bg-green-500' : 'bg-red-500'"
+       class="fixed bottom-4 right-4 px-6 py-3 text-white rounded-lg shadow-lg z-50 flex items-center gap-2">
+    <svg x-show="toast.type === 'success'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+    </svg>
+    <svg x-show="toast.type === 'error'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+    </svg>
+    <span x-text="toast.message"></span>
+  </div>
+
+  <!-- Modal d'association utilisateurs / groupes (superuser) -->
+  <div x-show="associateModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center px-4">
+    <div class="absolute inset-0 bg-black/50" @click="closeAssociateModal()"></div>
+    <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-lg w-full max-w-3xl p-4">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Associer l'album</h3>
+        <button @click="closeAssociateModal()" class="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
+      </div>
+
+      <div class="flex gap-2 mb-4">
+        <button :class="activeAssocTab === 'users' ? 'bg-sky-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'" @click="activeAssocTab='users'" class="px-3 py-2 rounded">Utilisateurs</button>
+        <button :class="activeAssocTab === 'groups' ? 'bg-sky-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'" @click="activeAssocTab='groups'" class="px-3 py-2 rounded">Groupes</button>
+      </div>
+
+      <div class="max-h-64 overflow-auto border border-gray-200 dark:border-gray-700 rounded p-2 mb-4">
+        <template x-if="loadingAssociations">
+          <div class="text-center text-sm text-gray-500">Chargement...</div>
+        </template>
+
+        <template x-if="!loadingAssociations && activeAssocTab === 'users'">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <template x-for="u in users" :key="u.id">
+              <label class="flex items-center gap-2 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer">
+                <input type="checkbox" :value="u.id" :checked="selectedUserIds.includes(u.id)" @change="toggleUser(u.id)" class="w-4 h-4" />
+                <span x-text="u.firstname + ' ' + u.lastname"></span>
+              </label>
+            </template>
+          </div>
+        </template>
+
+        <template x-if="!loadingAssociations && activeAssocTab === 'groups'">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <template x-for="g in groups" :key="g.id">
+              <label class="flex items-center gap-2 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer">
+                <input type="checkbox" :value="g.id" :checked="selectedGroupIds.includes(g.id)" @change="toggleGroup(g.id)" class="w-4 h-4" />
+                <span x-text="g.name"></span>
+              </label>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <div class="flex justify-end gap-2">
+        <button @click="closeAssociateModal()" class="px-4 py-2 bg-gray-200 dark:bg-gray-700 rounded">Annuler</button>
+        <button @click="submitAssociations()" class="px-4 py-2 bg-sky-600 text-white rounded">Valider</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Grille d'images et vidéos en masonry -->
+  {% if total_images %}
+  <div id="masonry-grid" class="pswp-gallery mx-auto"
+       data-album-id="{{ album.id }}"
+       data-offset="{{ images|length }}"
+       data-has-more="{{ 'true' if has_more else 'false' }}"
+       data-album-cover="{{ album.image_cover or '' }}"
+       data-page-size="{{ page_size }}">
+    {% for img in images %}
+    {% if img.is_video %}
+    <!-- Vidéo (non sélectionnable comme couverture) -->
+    <a href="{{ img.full_url }}" 
+       data-pswp-type="video"
+       data-pswp-width="1920" 
+       data-pswp-height="1080"
+       class="masonry-item p-1 block relative group cursor-pointer"
+       :class="{ 'opacity-50 pointer-events-none': selectMode }">
+      <div class="relative">
+        <img 
+          src="{{ img.thumbnail_url }}" 
+          alt="{{ img.filename }}"
+          loading="lazy"
+          class="w-full h-auto rounded-lg"
+        />
+        <!-- Icône play overlay -->
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div class="w-16 h-16 bg-black/50 rounded-full flex items-center justify-center group-hover:bg-black/70 transition-colors">
+            <svg class="w-8 h-8 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7z"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate">{{ img.filename }}</p>
+    </a>
+    {% else %}
+    <!-- Image -->
+    <div class="masonry-item p-1 block relative"
+         :class="{ 'cursor-pointer': selectMode }"
+         @click="selectMode ? selectImage('{{ img.filename }}') : null">
+      <!-- Lien vers PhotoSwipe (désactivé en mode sélection) -->
+      <a x-show="!selectMode"
+         href="{{ img.full_url }}" 
+         data-pswp-width="{{ img.width or 1920 }}" 
+         data-pswp-height="{{ img.height or 1080 }}"
+         target="_blank">
+        <img 
+          src="{{ img.thumbnail_url }}" 
+          alt="{{ img.filename }}"
+          loading="lazy"
+          class="w-full h-auto rounded-lg cursor-pointer hover:opacity-90 transition-opacity duration-200"
+        />
+      </a>
+      
+      <!-- Image en mode sélection -->
+      <div x-show="selectMode" class="relative">
+        <img 
+          src="{{ img.thumbnail_url }}" 
+          alt="{{ img.filename }}"
+          loading="lazy"
+          class="w-full h-auto rounded-lg transition-all duration-200"
+          :class="selectedImage === '{{ img.filename }}' ? 'ring-4 ring-purple-500 opacity-100' : 'hover:ring-2 hover:ring-purple-300 opacity-80 hover:opacity-100'"
+        />
+        
+        <!-- Badge couverture actuelle -->
+        {% if album.image_cover == img.filename %}
+        <div class="absolute top-2 left-2 bg-amber-500 text-white text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow-md">
+          <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+          </svg>
+          Actuelle
+        </div>
+        {% endif %}
+        
+        <!-- Overlay de sélection -->
+        <div x-show="selectedImage === '{{ img.filename }}'"
+             class="absolute inset-0 bg-purple-500/20 rounded-lg flex items-center justify-center">
+          <div class="bg-purple-600 rounded-full p-2 shadow-lg">
+            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="text-center py-12 bg-white dark:bg-gray-800 rounded-lg">
+    <svg class="w-16 h-16 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+    </svg>
+    <p class="text-gray-500 dark:text-gray-400">Aucun média dans cet album</p>
+  </div>
+  {% endif %}
+
+  <!-- Indicateur de chargement et sentinelle pour le scroll infini -->
+  {% if has_more %}
+  <div id="load-more-loading" class="flex justify-center items-center gap-2 py-6 text-gray-500 dark:text-gray-400">
+    <svg class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+    <span>Chargement des photos…</span>
+  </div>
+  <div id="infinite-scroll-sentinel" class="h-4"></div>
+  {% else %}
+  <div id="load-more-loading" class="hidden"></div>
+  <div id="infinite-scroll-sentinel" class="hidden"></div>
+  {% endif %}
+
+</div>
+
+<!-- Masonry.js + imagesLoaded -->
+<script src="https://unpkg.com/masonry-layout@4/dist/masonry.pkgd.min.js"></script>
+<script src="https://unpkg.com/imagesloaded@5/imagesloaded.pkgd.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const grid = document.getElementById('masonry-grid');
+  if (!grid) return;
+  
+  // Initialiser Masonry après le chargement des images
+  imagesLoaded(grid, function() {
+    new Masonry(grid, {
+      itemSelector: '.masonry-item',
+      columnWidth: '.masonry-item',
+      percentPosition: true,
+      horizontalOrder: true  // Ordre gauche → droite
+    });
+  });
+});
+</script>
+
+<!-- Chargement progressif (scroll infini) -->
+<script>
+(function () {
+  const grid = document.getElementById('masonry-grid');
+  const sentinel = document.getElementById('infinite-scroll-sentinel');
+  const loadingIndicator = document.getElementById('load-more-loading');
+
+  if (!grid || !sentinel) return;
+
+  const albumId = grid.dataset.albumId;
+  let offset = parseInt(grid.dataset.offset, 10);
+  let hasMore = grid.dataset.hasMore === 'true';
+  const pageSize = parseInt(grid.dataset.pageSize, 10) || 30;
+  const albumCover = grid.dataset.albumCover || '';
+  let loading = false;
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function buildVideoItem(img) {
+    return `
+      <a href="${escapeHtml(img.full_url)}"
+         data-pswp-type="video"
+         data-pswp-width="1920"
+         data-pswp-height="1080"
+         class="masonry-item p-1 block relative group cursor-pointer"
+         :class="{ 'opacity-50 pointer-events-none': selectMode }">
+        <div class="relative">
+          <img
+            src="${escapeHtml(img.thumbnail_url)}"
+            alt="${escapeHtml(img.filename)}"
+            loading="lazy"
+            class="w-full h-auto rounded-lg"
+          />
+          <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div class="w-16 h-16 bg-black/50 rounded-full flex items-center justify-center group-hover:bg-black/70 transition-colors">
+              <svg class="w-8 h-8 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate">${escapeHtml(img.filename)}</p>
+      </a>`;
+  }
+
+  function buildImageItem(img) {
+    const isCover = img.filename === albumCover;
+    const filename = escapeHtml(img.filename);
+    const w = img.width || 1920;
+    const h = img.height || 1080;
+    const coverBadge = isCover ? `
+      <div class="absolute top-2 left-2 bg-amber-500 text-white text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow-md">
+        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+        </svg>
+        Actuelle
+      </div>` : '';
+    return `
+      <div class="masonry-item p-1 block relative"
+           :class="{ 'cursor-pointer': selectMode }"
+           @click="selectMode ? selectImage('${filename}') : null">
+        <a x-show="!selectMode"
+           href="${escapeHtml(img.full_url)}"
+           data-pswp-width="${w}"
+           data-pswp-height="${h}"
+           target="_blank">
+          <img
+            src="${escapeHtml(img.thumbnail_url)}"
+            alt="${filename}"
+            loading="lazy"
+            class="w-full h-auto rounded-lg cursor-pointer hover:opacity-90 transition-opacity duration-200"
+          />
+        </a>
+        <div x-show="selectMode" class="relative">
+          <img
+            src="${escapeHtml(img.thumbnail_url)}"
+            alt="${filename}"
+            loading="lazy"
+            class="w-full h-auto rounded-lg transition-all duration-200"
+            :class="selectedImage === '${filename}' ? 'ring-4 ring-purple-500 opacity-100' : 'hover:ring-2 hover:ring-purple-300 opacity-80 hover:opacity-100'"
+          />
+          ${coverBadge}
+          <div x-show="selectedImage === '${filename}'"
+               class="absolute inset-0 bg-purple-500/20 rounded-lg flex items-center justify-center">
+            <div class="bg-purple-600 rounded-full p-2 shadow-lg">
+              <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  async function loadMore() {
+    if (loading || !hasMore) return;
+    loading = true;
+
+    try {
+      const resp = await fetch(`/album/${albumId}/images?offset=${offset}&limit=${pageSize}`, {
+        credentials: 'include'
+      });
+      if (!resp.ok) { hasMore = false; return; }
+      const data = await resp.json();
+
+      const msnry = Masonry.data(grid);
+      const newItems = [];
+
+      for (const img of data.items) {
+        const html = img.is_video ? buildVideoItem(img) : buildImageItem(img);
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = html.trim();
+        const el = wrapper.firstElementChild;
+        grid.appendChild(el);
+        // Initialiser Alpine.js sur le nouvel élément (hérite du scope parent)
+        if (window.Alpine) Alpine.initTree(el);
+        newItems.push(el);
+      }
+
+      // Mettre à jour Masonry une fois les images chargées
+      if (msnry && newItems.length) {
+        imagesLoaded(newItems, function () {
+          msnry.appended(newItems);
+        });
+      }
+
+      offset += data.items.length;
+      hasMore = data.has_more;
+
+      if (!hasMore) {
+        loadingIndicator.classList.add('hidden');
+        observer.unobserve(sentinel);
+      }
+    } catch (e) {
+      console.error('Erreur chargement photos:', e);
+      hasMore = false;
+    } finally {
+      loading = false;
+    }
+  }
+
+  const observer = new IntersectionObserver(
+    (entries) => { if (entries[0].isIntersecting) loadMore(); },
+    { rootMargin: '200px' }
+  );
+
+  if (hasMore) observer.observe(sentinel);
+})();
+</script>
+
+<!-- PhotoSwipe -->
+<script type="module">
+import PhotoSwipeLightbox from 'https://unpkg.com/photoswipe@5/dist/photoswipe-lightbox.esm.min.js';
+import PhotoSwipe from 'https://unpkg.com/photoswipe@5/dist/photoswipe.esm.min.js';
+
+const lightbox = new PhotoSwipeLightbox({
+  gallery: '.pswp-gallery',
+  children: 'a',
+  pswpModule: PhotoSwipe,
+  
+  // Options pour mobile
+  pinchToClose: true,
+  closeOnVerticalDrag: true,
+  
+  // Boucle infinie
+  loop: true,
+  
+  // Préchargement des images adjacentes
+  preload: [1, 2],
+  
+  // Zoom
+  initialZoomLevel: 'fit',
+  secondaryZoomLevel: 2,
+  maxZoomLevel: 4,
+  
+  // UI
+  bgOpacity: 0.9,
+  showHideAnimationType: 'zoom',
+  
+  // Padding sur mobile pour éviter les bords
+  paddingFn: (viewportSize) => {
+    return { top: 20, bottom: 20, left: 10, right: 10 };
+  }
+});
+
+// Gérer le type de contenu personnalisé pour les vidéos
+lightbox.addFilter('itemData', (itemData, index) => {
+  const element = itemData.element;
+  if (element && element.dataset.pswpType === 'video') {
+    itemData.type = 'video';
+    itemData.videoSrc = element.href;
+    itemData.width = parseInt(element.dataset.pswpWidth) || 1920;
+    itemData.height = parseInt(element.dataset.pswpHeight) || 1080;
+  }
+  return itemData;
+});
+
+// Créer le contenu vidéo
+lightbox.on('contentLoad', (e) => {
+  const { content } = e;
+  if (content.type === 'video') {
+    e.preventDefault();
+    
+    // Créer le conteneur vidéo
+    const videoContainer = document.createElement('div');
+    videoContainer.className = 'pswp__video-container';
+    videoContainer.style.cssText = 'display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;';
+    
+    const video = document.createElement('video');
+    video.src = content.data.videoSrc;
+    video.controls = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.style.cssText = 'max-width: 100%; max-height: 100%; border-radius: 8px;';
+    
+    videoContainer.appendChild(video);
+    content.element = videoContainer;
+  }
+});
+
+// Mettre en pause la vidéo quand on change de slide
+lightbox.on('contentActivate', (e) => {
+  // Pause toutes les vidéos sauf celle active
+  const pswp = lightbox.pswp;
+  if (pswp) {
+    pswp.element.querySelectorAll('video').forEach(v => v.pause());
+    // Jouer la vidéo active
+    const activeVideo = e.content.element?.querySelector('video');
+    if (activeVideo) {
+      activeVideo.play().catch(() => {}); // Ignorer les erreurs d'autoplay
+    }
+  }
+});
+
+// Mettre en pause quand on ferme
+lightbox.on('close', () => {
+  const pswp = lightbox.pswp;
+  if (pswp) {
+    pswp.element.querySelectorAll('video').forEach(v => v.pause());
+  }
+});
+
+lightbox.init();
+</script>
+
+<!-- Script Alpine.js pour la sélection de couverture -->
+<script>
+function coverSelector() {
+  return {
+    selectMode: false,
+    selectedImage: null,
+    saving: false,
+    currentCover: '{{ album.image_cover or "" }}',
+    albumId: {{ album.id }},
+    // Association modal state
+    associateModal: false,
+    activeAssocTab: 'users',
+    users: [],
+    groups: [],
+    selectedUserIds: [],
+    selectedGroupIds: [],
+    loadingAssociations: false,
+    toast: {
+      show: false,
+      message: '',
+      type: 'success'
+    },
+    
+    init() {
+      // Initialisation si nécessaire
+    },
+    
+    toggleSelectMode() {
+      this.selectMode = true;
+      this.selectedImage = null;
+    },
+
+    async openAssociateModal() {
+      this.associateModal = true;
+      this.activeAssocTab = 'users';
+      this.selectedUserIds = [];
+      this.selectedGroupIds = [];
+      await this.loadAssociationLists();
+    },
+
+    closeAssociateModal() {
+      this.associateModal = false;
+      this.selectedUserIds = [];
+      this.selectedGroupIds = [];
+    },
+
+    async loadAssociationLists() {
+      this.loadingAssociations = true;
+      try {
+        const [usersRes, groupsRes] = await Promise.all([
+          fetch('/be_group/get_all_users_simple/', { credentials: 'include' }),
+          fetch('/be_group/get_all_groups/', { credentials: 'include' })
+        ]);
+        this.users = usersRes.ok ? await usersRes.json() : [];
+        this.groups = groupsRes.ok ? await groupsRes.json() : [];
+      } catch (e) {
+        console.error('Erreur chargement users/groups', e);
+        this.users = [];
+        this.groups = [];
+      } finally {
+        this.loadingAssociations = false;
+      }
+    },
+
+    toggleUser(id) {
+      const i = this.selectedUserIds.indexOf(id);
+      if (i === -1) this.selectedUserIds.push(id); else this.selectedUserIds.splice(i,1);
+    },
+
+    toggleGroup(id) {
+      const i = this.selectedGroupIds.indexOf(id);
+      if (i === -1) this.selectedGroupIds.push(id); else this.selectedGroupIds.splice(i,1);
+    },
+
+    async submitAssociations() {
+      if (!this.albumId) return;
+      // users bulk
+      if (this.selectedUserIds.length > 0) {
+        try {
+          const res = await fetch('/be_group/create_users_album_bulk/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ album_id: this.albumId, user_ids: this.selectedUserIds })
+          });
+          if (!res.ok) throw await res.json();
+        } catch (e) {
+          this.showToast('Erreur lors de l\'association aux utilisateurs', 'error');
+          console.error(e);
+          return;
+        }
+      }
+
+      // groups bulk (single request)
+      if (this.selectedGroupIds.length > 0) {
+        try {
+          const res = await fetch('/be_group/create_album_groups_bulk/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ album_id: this.albumId, group_ids: this.selectedGroupIds })
+          });
+          if (!res.ok) throw await res.json();
+        } catch (e) {
+          this.showToast('Erreur lors de l\'association aux groupes', 'error');
+          console.error(e);
+          return;
+        }
+      }
+
+      this.showToast('Associations créées');
+      this.closeAssociateModal();
+    },
+    
+    cancelSelectMode() {
+      this.selectMode = false;
+      this.selectedImage = null;
+    },
+    
+    selectImage(filename) {
+      if (this.selectMode) {
+        this.selectedImage = filename;
+      }
+    },
+    
+    async confirmCover() {
+      if (!this.selectedImage || this.saving) return;
+      
+      this.saving = true;
+      
+      try {
+        const response = await fetch(`/be_album/update_album/${this.albumId}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({ 
+            image_cover: this.selectedImage 
+          })
+        });
+        
+        if (response.ok) {
+          this.showToast('Couverture mise à jour avec succès !', 'success');
+          this.currentCover = this.selectedImage;
+          this.selectMode = false;
+          this.selectedImage = null;
+          
+          // Recharger la page après un délai pour voir le changement
+          setTimeout(() => {
+            window.location.reload();
+          }, 1500);
+        } else {
+          const error = await response.json();
+          // Extraire le message d'erreur (peut être un objet ou une chaîne)
+          let errorMsg = 'Erreur lors de la mise à jour';
+          if (typeof error.detail === 'string') {
+            errorMsg = error.detail;
+          } else if (Array.isArray(error.detail) && error.detail.length > 0) {
+            // Erreur de validation Pydantic
+            errorMsg = error.detail.map(e => e.msg || e.message || JSON.stringify(e)).join(', ');
+          } else if (error.detail) {
+            errorMsg = JSON.stringify(error.detail);
+          }
+          this.showToast(errorMsg, 'error');
+        }
+      } catch (error) {
+        console.error('Erreur:', error);
+        this.showToast('Erreur de connexion au serveur', 'error');
+      } finally {
+        this.saving = false;
+      }
+    },
+    
+    showToast(message, type = 'success') {
+      this.toast.message = message;
+      this.toast.type = type;
+      this.toast.show = true;
+      
+      setTimeout(() => {
+        this.toast.show = false;
+      }, 3000);
+    }
+  }
+}
+</script>
+
+<style>
+  /* Responsive column widths */
+  .masonry-item { width: 100%; }  /* Mobile: 1 colonne */
+  
+  @media (min-width: 640px) {
+    .masonry-item { width: 50%; }  /* Petit écran: 2 colonnes */
+  }
+  
+  @media (min-width: 768px) {
+    .masonry-item { width: 33.333%; }  /* Tablette: 3 colonnes */
+  }
+  
+  @media (min-width: 1024px) {
+    .masonry-item { width: 25%; }  /* PC: 4 colonnes */
+  }
+  
+  /* Empêcher le lien de s'ouvrir dans un nouvel onglet (fallback si JS désactivé) */
+  .pswp-gallery a {
+    text-decoration: none;
+  }
+</style>
+{% endblock %}

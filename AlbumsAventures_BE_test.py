@@ -1,0 +1,61 @@
+"""
+Version de l'application FastAPI pour les tests.
+N'initialise pas de données de test et n'efface pas la base au démarrage.
+"""
+
+import logging
+import os
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+# Initialiser le SecretStore AVANT tout import de config (idem que dans AlbumsAventures-BE.py)
+from utils.secret_store import SecretStore
+
+SecretStore.init()
+
+from backend.routers import be_album, be_auth, be_category, be_formatter, be_group, be_resizer, be_user
+from frontend.routers import fe_router
+
+# Configuration du logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan simplifié pour les tests - pas d'initialisation de données"""
+    logger.info("Démarrage de l'application de test")
+    yield
+    logger.info("Arrêt de l'application de test")
+
+
+# Créer l'application
+app = FastAPI(lifespan=lifespan, title="AlbumsAventures Test")
+
+# CORS
+origins = ["http://localhost:5003", "http://localhost:8003"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Inclure les routers
+app.include_router(be_album.router)
+app.include_router(be_album.public_router)
+app.include_router(be_user.router)
+app.include_router(be_auth.router)
+app.include_router(be_category.router)
+app.include_router(be_formatter.router)
+app.include_router(be_group.router)
+app.include_router(be_resizer.router)
+app.include_router(fe_router.router)
+
+# Monter les fichiers statiques seulement s'ils existent
+if os.path.exists("frontend/static"):
+    app.mount("/static", StaticFiles(directory="frontend/static"), name="static")

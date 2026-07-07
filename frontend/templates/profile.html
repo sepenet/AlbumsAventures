@@ -1,0 +1,375 @@
+{% extends 'base.html' %}
+
+{% block title %}Mon profil — Albums Aventures{% endblock %}
+
+{% block content %}
+<div class="py-8 max-w-2xl mx-auto" x-data="profilePage()" x-init="init()">
+  
+  <!-- Header -->
+  <div class="mb-8">
+    <h1 class="text-3xl font-bold bg-gradient-to-r from-sky-500 to-blue-600 bg-clip-text text-transparent mb-2">
+      Mon profil
+    </h1>
+    <p class="text-gray-600 dark:text-gray-400">
+      Gérez vos informations personnelles et votre mot de passe
+    </p>
+  </div>
+
+  <!-- Messages de succès/erreur -->
+  <template x-if="successMessage">
+    <div class="mb-6 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-300 px-4 py-3 rounded-lg flex items-center">
+      <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+      </svg>
+      <span class="text-sm" x-text="successMessage"></span>
+    </div>
+  </template>
+  
+  <template x-if="errorMessage">
+    <div class="mb-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded-lg flex items-center">
+      <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+      </svg>
+      <span class="text-sm" x-text="errorMessage"></span>
+    </div>
+  </template>
+
+  <!-- Section Informations personnelles -->
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 mb-6">
+    <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+        <svg class="w-5 h-5 text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+        </svg>
+        Informations personnelles
+      </h2>
+    </div>
+    <form @submit.prevent="updateProfile()" class="p-6 space-y-4">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Prénom -->
+        <div>
+          <label for="firstname" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Prénom
+          </label>
+          <input 
+            type="text" 
+            id="firstname"
+            x-model="profileForm.firstname"
+            class="w-full px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+            required
+          />
+          <template x-if="profileErrors.firstname">
+            <p class="mt-1 text-sm text-red-600 dark:text-red-400" x-text="profileErrors.firstname"></p>
+          </template>
+        </div>
+        
+        <!-- Nom -->
+        <div>
+          <label for="lastname" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Nom
+          </label>
+          <input 
+            type="text" 
+            id="lastname"
+            x-model="profileForm.lastname"
+            class="w-full px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+            required
+          />
+          <template x-if="profileErrors.lastname">
+            <p class="mt-1 text-sm text-red-600 dark:text-red-400" x-text="profileErrors.lastname"></p>
+          </template>
+        </div>
+      </div>
+      
+      <!-- Email -->
+      <div>
+        <label for="email" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Email
+        </label>
+        <input 
+          type="email" 
+          id="email"
+          x-model="profileForm.email"
+          class="w-full px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+          required
+        />
+        <template x-if="profileErrors.email">
+          <p class="mt-1 text-sm text-red-600 dark:text-red-400" x-text="profileErrors.email"></p>
+        </template>
+      </div>
+      
+      <!-- Bouton sauvegarder -->
+      <div class="pt-2">
+        <button 
+          type="submit"
+          :disabled="savingProfile"
+          class="inline-flex items-center px-4 py-2 bg-sky-600 hover:bg-sky-700 disabled:bg-sky-400 text-white font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2"
+        >
+          <template x-if="savingProfile">
+            <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </template>
+          <span x-text="savingProfile ? 'Enregistrement...' : 'Enregistrer les modifications'"></span>
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Section Changement de mot de passe -->
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700">
+    <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+        <svg class="w-5 h-5 text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+        </svg>
+        Changer le mot de passe
+      </h2>
+    </div>
+    <form @submit.prevent="updatePassword()" class="p-6 space-y-4">
+      <!-- Mot de passe actuel -->
+      <div>
+        <label for="current_password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Mot de passe actuel
+        </label>
+        <input 
+          type="password" 
+          id="current_password"
+          x-model="passwordForm.current_password"
+          class="w-full px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+          required
+        />
+        <template x-if="passwordErrors.current_password">
+          <p class="mt-1 text-sm text-red-600 dark:text-red-400" x-text="passwordErrors.current_password"></p>
+        </template>
+      </div>
+      
+      <!-- Nouveau mot de passe -->
+      <div>
+        <label for="new_password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Nouveau mot de passe
+        </label>
+        <input 
+          type="password" 
+          id="new_password"
+          x-model="passwordForm.new_password"
+          class="w-full px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+          required
+        />
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          Minimum 8 caractères avec au moins une minuscule, une majuscule et un chiffre
+        </p>
+        <template x-if="passwordErrors.new_password">
+          <p class="mt-1 text-sm text-red-600 dark:text-red-400" x-text="passwordErrors.new_password"></p>
+        </template>
+      </div>
+      
+      <!-- Confirmation nouveau mot de passe -->
+      <div>
+        <label for="confirm_password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Confirmer le nouveau mot de passe
+        </label>
+        <input 
+          type="password" 
+          id="confirm_password"
+          x-model="passwordForm.confirm_password"
+          class="w-full px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+          required
+        />
+        <template x-if="passwordErrors.confirm_password">
+          <p class="mt-1 text-sm text-red-600 dark:text-red-400" x-text="passwordErrors.confirm_password"></p>
+        </template>
+      </div>
+      
+      <!-- Bouton changer mot de passe -->
+      <div class="pt-2">
+        <button 
+          type="submit"
+          :disabled="savingPassword"
+          class="inline-flex items-center px-4 py-2 bg-sky-600 hover:bg-sky-700 disabled:bg-sky-400 text-white font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2"
+        >
+          <template x-if="savingPassword">
+            <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </template>
+          <span x-text="savingPassword ? 'Modification...' : 'Changer le mot de passe'"></span>
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Retour à l'accueil -->
+  <div class="mt-6 text-center">
+    <a href="/" class="text-sky-600 dark:text-sky-400 hover:underline text-sm">
+      ← Retour aux albums
+    </a>
+  </div>
+
+</div>
+
+<script>
+function profilePage() {
+  return {
+    // Données utilisateur
+    user: {{ user | tojson | safe }},
+    
+    // Formulaire profil
+    profileForm: {
+      firstname: '',
+      lastname: '',
+      email: ''
+    },
+    profileErrors: {},
+    savingProfile: false,
+    
+    // Formulaire mot de passe
+    passwordForm: {
+      current_password: '',
+      new_password: '',
+      confirm_password: ''
+    },
+    passwordErrors: {},
+    savingPassword: false,
+    
+    // Messages
+    successMessage: '',
+    errorMessage: '',
+    
+    init() {
+      // Initialiser le formulaire avec les données utilisateur
+      this.profileForm.firstname = this.user.firstname || '';
+      this.profileForm.lastname = this.user.lastname || '';
+      this.profileForm.email = this.user.email || '';
+    },
+    
+    // Validation du formulaire profil
+    validateProfile() {
+      this.profileErrors = {};
+      
+      if (!this.profileForm.firstname || this.profileForm.firstname.trim().length < 2) {
+        this.profileErrors.firstname = 'Le prénom doit contenir au moins 2 caractères';
+      }
+      
+      if (!this.profileForm.lastname || this.profileForm.lastname.trim().length < 2) {
+        this.profileErrors.lastname = 'Le nom doit contenir au moins 2 caractères';
+      }
+      
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!this.profileForm.email || !emailRegex.test(this.profileForm.email)) {
+        this.profileErrors.email = 'Adresse email invalide';
+      }
+      
+      return Object.keys(this.profileErrors).length === 0;
+    },
+    
+    // Mise à jour du profil
+    async updateProfile() {
+      this.clearMessages();
+      
+      if (!this.validateProfile()) return;
+      
+      this.savingProfile = true;
+      
+      try {
+        const response = await fetch('/be_auth/update_profile', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          credentials: 'include',
+          body: JSON.stringify(this.profileForm)
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+          this.successMessage = 'Profil mis à jour avec succès';
+          // Mettre à jour le store Alpine.js
+          if (Alpine.store('auth')) {
+            Alpine.store('auth').user = { ...Alpine.store('auth').user, ...this.profileForm };
+          }
+        } else {
+          this.errorMessage = data.detail || 'Erreur lors de la mise à jour du profil';
+        }
+      } catch (error) {
+        this.errorMessage = 'Erreur de connexion au serveur';
+        console.error('Erreur:', error);
+      } finally {
+        this.savingProfile = false;
+      }
+    },
+    
+    // Validation du formulaire mot de passe
+    validatePassword() {
+      this.passwordErrors = {};
+      
+      if (!this.passwordForm.current_password) {
+        this.passwordErrors.current_password = 'Le mot de passe actuel est requis';
+      }
+      
+      if (!this.passwordForm.new_password || this.passwordForm.new_password.length < 8) {
+        this.passwordErrors.new_password = 'Le mot de passe doit contenir au moins 8 caractères';
+      } else if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(this.passwordForm.new_password)) {
+        this.passwordErrors.new_password = 'Le mot de passe doit contenir au moins une minuscule, une majuscule et un chiffre';
+      }
+      
+      if (this.passwordForm.new_password !== this.passwordForm.confirm_password) {
+        this.passwordErrors.confirm_password = 'Les mots de passe ne correspondent pas';
+      }
+      
+      return Object.keys(this.passwordErrors).length === 0;
+    },
+    
+    // Changement de mot de passe
+    async updatePassword() {
+      this.clearMessages();
+      
+      if (!this.validatePassword()) return;
+      
+      this.savingPassword = true;
+      
+      try {
+        const response = await fetch('/be_auth/update_password', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            current_password: this.passwordForm.current_password,
+            new_password: this.passwordForm.new_password
+          })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+          this.successMessage = 'Mot de passe modifié avec succès';
+          // Vider le formulaire
+          this.passwordForm = {
+            current_password: '',
+            new_password: '',
+            confirm_password: ''
+          };
+        } else {
+          this.errorMessage = data.detail || 'Erreur lors du changement de mot de passe';
+        }
+      } catch (error) {
+        this.errorMessage = 'Erreur de connexion au serveur';
+        console.error('Erreur:', error);
+      } finally {
+        this.savingPassword = false;
+      }
+    },
+    
+    clearMessages() {
+      this.successMessage = '';
+      this.errorMessage = '';
+    }
+  };
+}
+</script>
+{% endblock %}

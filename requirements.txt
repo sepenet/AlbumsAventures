@@ -1,0 +1,42 @@
+# This file is used to install the required packages for the project.
+# It is recommended to use a virtual environment to avoid conflicts with other projects.
+fastapi
+pillow
+psycopg2
+pydantic
+PyExifTool
+python-jose
+python-multipart
+SQLAlchemy
+sqlmodel
+typing_extensions
+uvicorn
+passlib
+requests
+jinja2
+httpx
+opencv-python
+
+# Upload resumable (protocole TUS) - voir TODO #391
+tuspyserver>=4.2.0
+
+# Gestion des secrets
+python-dotenv
+
+# Azure Key Vault (production uniquement)
+azure-identity
+azure-keyvault-secrets
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-cov>=5.0.0
+
+# E2E Testing (Playwright)
+pytest-playwright>=0.4.0
+playwright>=1.40.0
+
+# Qualité de code (lint + format + hooks)
+ruff>=0.6.0
+black>=24.0.0
+pre-commit>=3.7.0

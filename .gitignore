@@ -1,0 +1,40 @@
+# Created by venv; see https://docs.python.org/3/library/venv.html
+/include/
+/lib/
+/__pycache__/
+pyenv.cfg
+pyvenv.cfg
+*.pyc
+database.db
+/Scripts/
+/backend/__pycache__/
+API_test.ps1
+
+# Logs
+logs/*.log
+logs/*.log.*
+
+# images et thumbnails
+/frontend/static/images/
+/frontend/static/thumbnails/
+
+# Uploads TUS temporaires (resumable, voir backend/routers/be_resizer.py tus_router)
+/uploads_tus/
+
+# Fichier de secrets local (ne JAMAIS commiter)
+.env
+.env.*
+
+# Caches outils qualité
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# Couverture de tests
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Baseline detect-secrets
+.secrets.baseline

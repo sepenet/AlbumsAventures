@@ -1,0 +1,256 @@
+<!doctype html>
+<html x-data="darkMode()" :class="{ 'dark': dark }" lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}AlbumsAventures{% endblock %}</title>
+  <!-- Tailwind via CDN pour prototype; remplacer par build Tailwind en production -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class'
+    }
+  </script>
+  <!-- Optionnel: charger un fichier CSS local si présent -->
+  {% if static_css %}
+  <link rel="stylesheet" href="{{ static_css }}">
+  {% endif %}
+  <script>
+  function darkMode(){
+    return {
+      dark: localStorage.getItem('darkMode') === 'true',
+      toggle(){ this.dark = !this.dark; localStorage.setItem('darkMode', this.dark) }
+    }
+  }
+
+  // Store Alpine.js pour les données utilisateur (Tâche 90)
+  document.addEventListener('alpine:init', () => {
+    Alpine.store('auth', {
+      user: null,
+      isAuthenticated: false,
+      pendingUsersCount: 0,
+      
+      async checkSession() {
+        try {
+          const response = await fetch('/be_auth/me', {
+            credentials: 'include'
+          });
+          
+          if (response.ok) {
+            this.user = await response.json();
+            this.isAuthenticated = true;
+            // Charger le nombre d'utilisateurs en attente si superuser (Tâche 280)
+            if (this.user?.is_superuser) {
+              this.loadPendingUsersCount();
+            }
+            return true;
+          } else {
+            this.user = null;
+            this.isAuthenticated = false;
+            return false;
+          }
+        } catch (error) {
+          console.error('Erreur vérification session:', error);
+          this.user = null;
+          this.isAuthenticated = false;
+          return false;
+        }
+      },
+      
+      async logout() {
+        try {
+          await fetch('/be_auth/logout', {
+            method: 'POST',
+            credentials: 'include'
+          });
+          this.user = null;
+          this.isAuthenticated = false;
+          window.location.href = '/login';
+        } catch (error) {
+          console.error('Erreur déconnexion:', error);
+        }
+      },
+      
+      // Charger le nombre d'utilisateurs en attente (Tâche 280)
+      async loadPendingUsersCount() {
+        try {
+          const response = await fetch('/be_auth/admin/users/pending-count', {
+            credentials: 'include'
+          });
+          if (response.ok) {
+            const data = await response.json();
+            this.pendingUsersCount = data.count;
+          }
+        } catch (error) {
+          console.error('Erreur chargement utilisateurs en attente:', error);
+        }
+      }
+    });
+  });
+
+  // Vérification automatique de la session au chargement (Tâche 90)
+  document.addEventListener('DOMContentLoaded', async () => {
+    // Pages publiques qui ne nécessitent pas d'authentification (Tâches 100, 110-120, 200)
+    const publicPages = ['/login', '/signup', '/forgot-password', '/reset-password', '/rando', '/album/shared'];
+    const currentPath = window.location.pathname;
+    
+    // Si on est sur une page publique, pas besoin de vérifier
+    if (publicPages.includes(currentPath)) {
+      return;
+    }
+    
+    // Vérifier la session via le store Alpine
+    const authStore = Alpine.store('auth');
+    const isValid = await authStore.checkSession();
+    
+    if (!isValid) {
+      // Token invalide ou expiré → redirection vers login
+      window.location.href = '/login';
+    }
+  });
+  </script>
+  <style>[x-cloak]{display:none !important;}</style>
+  <!-- Alpine.js pour interactivité progressive -->
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 text-gray-900 min-h-screen dark:text-gray-100 transition-colors duration-300">
+  <header class="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700 transition-colors duration-300">
+    <div class="container mx-auto px-4 py-4">
+      <div class="flex items-center justify-between">
+        <a href="/" class="flex items-center space-x-2 group">
+          <span class="font-bold text-xl bg-gradient-to-r from-sky-500 to-blue-600 bg-clip-text text-transparent">
+            Albums Aventures
+          </span>
+        </a>
+        <div class="flex items-center space-x-4">
+          <!-- Menu utilisateur (Tâche 90) -->
+          <div x-data="{ open: false }" class="relative" x-show="$store.auth.isAuthenticated" style="display: none;">
+            <button 
+              @click="open = !open"
+              class="flex items-center space-x-2 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-sky-500"
+            >
+              <svg class="w-5 h-5 text-gray-700 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+              </svg>
+              <span class="text-sm font-medium text-gray-700 dark:text-gray-300" x-text="$store.auth.user?.email"></span>
+              <svg class="w-4 h-4 text-gray-700 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+              </svg>
+            </button>
+            
+            <!-- Dropdown menu -->
+            <div 
+              x-show="open" 
+              @click.away="open = false"
+              x-transition:enter="transition ease-out duration-100"
+              x-transition:enter-start="transform opacity-0 scale-95"
+              x-transition:enter-end="transform opacity-100 scale-100"
+              x-transition:leave="transition ease-in duration-75"
+              x-transition:leave-start="transform opacity-100 scale-100"
+              x-transition:leave-end="transform opacity-0 scale-95"
+              class="absolute right-0 mt-2 w-48 rounded-lg shadow-lg bg-white dark:bg-gray-800 ring-1 ring-black ring-opacity-5 z-50"
+              style="display: none;"
+            >
+              <div class="py-1">
+                <a href="/profile" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition duration-200">
+                  <div class="flex items-center space-x-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                    </svg>
+                    <span>Mon profil</span>
+                  </div>
+                </a>
+                <!-- Liens Admin (visible uniquement pour les superusers) - Tâches 111, 250, 260 -->
+                <template x-if="$store.auth.user?.is_superuser">
+                  <div>
+                    <a 
+                      href="/admin/users" 
+                      class="block px-4 py-2 text-sm text-purple-600 dark:text-purple-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition duration-200"
+                    >
+                      <div class="flex items-center space-x-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+                        </svg>
+                        <span>Utilisateurs</span>
+                      </div>
+                    </a>
+                    <a 
+                      href="/admin/groups" 
+                      class="block px-4 py-2 text-sm text-purple-600 dark:text-purple-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition duration-200"
+                    >
+                      <div class="flex items-center space-x-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+                        </svg>
+                        <span>Gestion des accès</span>
+                      </div>
+                    </a>
+                    <hr class="my-1 border-gray-200 dark:border-gray-700">
+                  </div>
+                </template>
+                <button 
+                  @click="$store.auth.logout()"
+                  class="w-full text-left block px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition duration-200"
+                >
+                  <div class="flex items-center space-x-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                    </svg>
+                    <span>Déconnexion</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Badge utilisateurs en attente (Tâche 280) - visible uniquement pour superusers -->
+          <template x-if="$store.auth.user?.is_superuser && $store.auth.pendingUsersCount > 0">
+            <a 
+              href="/admin/users" 
+              class="relative p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200"
+              title="Utilisateurs en attente d'activation"
+            >
+              <svg class="w-5 h-5 text-gray-700 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+              </svg>
+              <span 
+                x-text="$store.auth.pendingUsersCount"
+                class="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-xs font-bold text-white bg-red-500 rounded-full"
+              ></span>
+            </a>
+          </template>
+          
+          <!-- Bouton dark mode -->
+          <button 
+            @click="toggle()" 
+            aria-label="Basculer thème clair/sombre" 
+            class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-sky-500"
+          >
+            <template x-if="!dark">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-700" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M10 2a.75.75 0 01.75.75V4a.75.75 0 01-1.5 0V2.75A.75.75 0 0110 2zM10 16a.75.75 0 01.75.75V18a.75.75 0 01-1.5 0v-1.25A.75.75 0 0110 16zM4.22 4.22a.75.75 0 011.06 0L6.5 5.44a.75.75 0 11-1.06 1.06L4.22 5.28a.75.75 0 010-1.06zM13.5 14.56a.75.75 0 011.06 1.06l-1.22 1.22a.75.75 0 11-1.06-1.06l1.22-1.22zM2 10a.75.75 0 01.75-.75H4a.75.75 0 010 1.5H2.75A.75.75 0 012 10zm14 0a.75.75 0 01.75-.75H18a.75.75 0 010 1.5h-1.25A.75.75 0 0116 10zM4.22 15.78a.75.75 0 010-1.06L5.44 13.5a.75.75 0 011.06 1.06L5.28 15.78a.75.75 0 01-1.06 0zM13.5 5.44a.75.75 0 011.06-1.06l1.22 1.22a.75.75 0 11-1.06 1.06L13.5 5.44zM10 6.5a3.5 3.5 0 100 7 3.5 3.5 0 000-7z"/>
+              </svg>
+            </template>
+            <template x-if="dark">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M17.293 13.293A8 8 0 116.707 2.707 6 6 0 0017.293 13.293z"/>
+              </svg>
+            </template>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container mx-auto px-4">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="mt-auto py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+    <div class="container mx-auto px-4">
+      <p>© {{ year or "2026" }} Albums Aventures — Tous droits réservés</p>
+    </div>
+  </footer>
+
+</body>
+</html>

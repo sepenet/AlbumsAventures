@@ -1,0 +1,328 @@
+{% extends "base.html" %}
+
+{% block title %}Upload - {{ album.title }} — Albums Aventures{% endblock %}
+
+{% block content %}
+<!-- Uppy CSS -->
+<link href="https://releases.transloadit.com/uppy/v3.27.0/uppy.min.css" rel="stylesheet">
+
+<div class="py-6 max-w-4xl mx-auto" x-data="uploadManager()">
+
+  <!-- En-tête -->
+  <div class="mb-8">
+    <a href="/album/{{ album.id }}" class="inline-flex items-center gap-2 text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 transition-colors mb-4">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+      </svg>
+      Retour à l'album
+    </a>
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-100">Ajouter des photos</h1>
+    <p class="text-gray-600 dark:text-gray-400 mt-1">
+      Album : <span class="font-medium">{{ album.title }}</span>
+    </p>
+  </div>
+
+  <!-- Message de résultat -->
+  <div x-show="uploadResult" x-cloak class="mb-6 p-4 rounded-lg"
+       :class="uploadResult?.status === 'success' ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'">
+    <div class="flex items-start gap-3">
+      <template x-if="uploadResult?.status === 'success'">
+        <svg class="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+        </svg>
+      </template>
+      <template x-if="uploadResult?.status !== 'success'">
+        <svg class="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+      </template>
+      <div>
+        <p class="font-medium" :class="uploadResult?.status === 'success' ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'" x-text="uploadResult?.message"></p>
+        <template x-if="uploadResult?.details">
+          <ul class="mt-2 text-sm" :class="uploadResult?.status === 'success' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'">
+            <li x-show="uploadResult.details.uploaded > 0">✓ <span x-text="uploadResult.details.uploaded"></span> fichier(s) uploadé(s)</li>
+            <li x-show="uploadResult.details.skipped > 0">⚠ <span x-text="uploadResult.details.skipped"></span> fichier(s) ignoré(s)</li>
+            <li x-show="uploadResult.details.errors > 0">✗ <span x-text="uploadResult.details.errors"></span> erreur(s)</li>
+          </ul>
+        </template>
+        <template x-if="uploadResult?.details?.error_messages?.length > 0">
+          <ul class="mt-2 text-sm text-red-600 dark:text-red-400">
+            <template x-for="err in uploadResult.details.error_messages" :key="err">
+              <li x-text="'• ' + err"></li>
+            </template>
+          </ul>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- Zone Uppy Dashboard -->
+  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6">
+    <div id="uppy-dashboard"></div>
+  </div>
+
+  <!-- Actions post-upload -->
+  <div class="mt-6 flex flex-col sm:flex-row gap-3">
+    <a href="/album/{{ album.id }}"
+       class="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-sky-600 hover:bg-sky-700 text-white font-medium rounded-lg transition-colors">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+      </svg>
+      Voir l'album
+    </a>
+    <button @click="regenerateThumbnails()"
+            :disabled="regenerating"
+            class="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 text-white font-medium rounded-lg transition-colors">
+      <template x-if="!regenerating">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+        </svg>
+      </template>
+      <template x-if="regenerating">
+        <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+      </template>
+      <span x-text="regenerating ? 'Génération...' : 'Régénérer vignettes'"></span>
+    </button>
+  </div>
+
+</div>
+
+<!-- Uppy JS -->
+<script src="https://releases.transloadit.com/uppy/v3.27.0/uppy.min.js"></script>
+<script>
+function uploadManager() {
+  return {
+    uploadResult: null,
+    regenerating: false,
+    uppy: null,
+
+    init() {
+      const albumId = {{ album.id }};
+      const self = this;
+
+      // Initialiser Uppy avec Dashboard
+      this.uppy = new Uppy.Uppy({
+        id: 'uppy-album-upload',
+        autoProceed: false,
+        allowMultipleUploadBatches: true,
+        restrictions: {
+          // Plafond aligné sur la limite vidéo backend (500 MB). Les limites
+          // précises par type (image 30 MB / vidéo 500 MB) sont appliquées
+          // côté serveur dans _tus_hook_pre_creation (réponse 413 si dépassé).
+          maxFileSize: 500 * 1024 * 1024, // 500 MB
+          // 'video/avi' n'est PAS un type MIME standard : un .avi est détecté
+          // par le navigateur comme 'video/x-msvideo' et serait donc rejeté.
+          // On filtre les .avi par extension à la place.
+          allowedFileTypes: ['image/*', 'video/mp4', '.avi', '.heic']
+        },
+        locale: {
+          strings: {
+            dropPasteFiles: 'Glissez-déposez vos fichiers ici ou %{browseFiles}',
+            browseFiles: 'parcourez',
+            uploadXFiles: {
+              0: 'Uploader %{smart_count} fichier',
+              1: 'Uploader %{smart_count} fichiers'
+            },
+            uploadXNewFiles: {
+              0: 'Uploader +%{smart_count} fichier',
+              1: 'Uploader +%{smart_count} fichiers'
+            },
+            upload: 'Uploader',
+            cancel: 'Annuler',
+            retryUpload: 'Réessayer',
+            pauseUpload: 'Pause',
+            resumeUpload: 'Reprendre',
+            done: 'Terminé',
+            filesUploadedOfTotal: {
+              0: '%{complete} sur %{smart_count} fichier uploadé',
+              1: '%{complete} sur %{smart_count} fichiers uploadés'
+            },
+            dataUploadedOfTotal: '%{complete} sur %{total}',
+            xTimeLeft: '%{time} restant',
+            uploadFailed: 'Échec de l\'upload',
+            paused: 'En pause',
+            error: 'Erreur',
+            retry: 'Réessayer',
+            uploadPaused: 'Upload en pause',
+            processing: 'Traitement...',
+            poweredBy: '',
+            addMore: 'Ajouter plus',
+            editFile: 'Modifier',
+            editing: 'Modification de %{file}',
+            save: 'Enregistrer',
+            dropPasteBoth: 'Glissez-déposez vos fichiers ici, collez ou %{browseFiles}',
+            dropPasteImportFiles: 'Glissez-déposez vos fichiers ici, collez, %{browseFiles} ou importez depuis :',
+            dropHint: 'Déposez vos fichiers ici',
+            browse: 'parcourir',
+            uploadComplete: 'Upload terminé',
+            cancelUpload: 'Annuler l\'upload',
+            xFilesSelected: {
+              0: '%{smart_count} fichier sélectionné',
+              1: '%{smart_count} fichiers sélectionnés'
+            },
+            uploadingXFiles: {
+              0: 'Upload de %{smart_count} fichier',
+              1: 'Upload de %{smart_count} fichiers'
+            },
+            compressingImages: 'Compression des images...'
+          }
+        }
+      });
+
+      // Ajouter le Dashboard UI
+      this.uppy.use(Uppy.Dashboard, {
+        target: '#uppy-dashboard',
+        inline: true,
+        width: '100%',
+        height: 400,
+        showProgressDetails: true,
+        proudlyDisplayPoweredByUppy: false,
+        note: 'Images (max 30 Mo) et vidéos MP4/AVI (max 500 Mo)',
+        theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+      });
+
+      // album_id transmis dans la metadata TUS (lue côté backend dans pre_create + on_upload_complete)
+      this.uppy.setMeta({ album_id: String(albumId) });
+
+      // Upload TUS resumable (protocole tus.io)
+      // - chunkSize 256 KB : indispensable sur 4G instable. Les opérateurs mobiles
+      //   et les NAT carriers coupent fréquemment les longues requêtes PATCH (>1s).
+      //   Avec 256 KB, chaque PATCH dure typiquement 50-300 ms et passe avant
+      //   tout glitch réseau (cf. logs prod 2026-04-27 où 21/22 PATCH 2MB ont
+      //   été perdus silencieusement entre Edge Android et Caddy).
+      // - retryDelays : backoff agressif au début, puis plus espacé
+      // - withCredentials : envoie le cookie JWT pour l'auth FastAPI
+      // - limit : 1 fichier à la fois (séquentiel) pour ne pas saturer le lien
+      // Voir backend/routers/be_resizer.py (tus_router) - tâches TODO #391/#392.
+      this.uppy.use(Uppy.Tus, {
+        endpoint: '/be_resizer/tus/',
+        chunkSize: 256 * 1024,
+        retryDelays: [0, 1000, 3000, 5000, 10000, 20000, 40000, 60000],
+        removeFingerprintOnSuccess: true,
+        withCredentials: true,
+        limit: 1
+      });
+
+      // Gérer le succès (chaque fichier est uploadé séparément)
+      this.uppy.on('complete', (result) => {
+        console.log('Upload complete:', result);
+
+        const totalUploaded = result.successful.length;
+        const totalFailed = result.failed.length;
+
+        if (totalFailed > 0) {
+          self.uploadResult = {
+            status: totalUploaded > 0 ? 'success' : 'error',
+            message: totalUploaded > 0
+              ? `Upload terminé avec des erreurs`
+              : `Échec de l'upload`,
+            details: {
+              uploaded: totalUploaded,
+              skipped: 0,
+              errors: totalFailed,
+              error_messages: result.failed.map(f => `${f.name}: ${f.error || 'Erreur inconnue'}`)
+            }
+          };
+        } else if (totalUploaded > 0) {
+          self.uploadResult = {
+            status: 'success',
+            message: `${totalUploaded} fichier(s) uploadé(s) avec succès`,
+            details: {
+              uploaded: totalUploaded,
+              skipped: 0,
+              errors: 0
+            }
+          };
+        }
+      });
+
+      // Gérer les erreurs
+      this.uppy.on('error', (error) => {
+        console.error('Upload error:', error);
+        self.uploadResult = {
+          status: 'error',
+          message: 'Erreur lors de l\'upload: ' + error.message
+        };
+      });
+    },
+
+    async regenerateThumbnails() {
+      this.regenerating = true;
+      try {
+        const response = await fetch(`/be_resizer/create_thumbnails/{{ album.id }}`, {
+          credentials: 'include'
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+          this.uploadResult = {
+            status: 'success',
+            message: data.message,
+            details: {
+              uploaded: data.details.tbn_created,
+              skipped: data.details.tbn_exist,
+              errors: data.details.img_not_supported
+            }
+          };
+        } else {
+          this.uploadResult = {
+            status: 'error',
+            message: data.detail || 'Erreur lors de la génération'
+          };
+        }
+      } catch (error) {
+        this.uploadResult = {
+          status: 'error',
+          message: 'Erreur de connexion: ' + error.message
+        };
+      } finally {
+        this.regenerating = false;
+      }
+    }
+  }
+}
+</script>
+
+<style>
+  /* Personnalisation Uppy pour correspondre au design */
+  .uppy-Dashboard-inner {
+    border-radius: 0.75rem !important;
+  }
+
+  .dark .uppy-Dashboard-inner {
+    background-color: rgb(31, 41, 55) !important;
+    border-color: rgb(75, 85, 99) !important;
+  }
+
+  .dark .uppy-Dashboard-AddFiles {
+    border-color: rgb(75, 85, 99) !important;
+  }
+
+  .dark .uppy-Dashboard-AddFiles-title {
+    color: rgb(209, 213, 219) !important;
+  }
+
+  .dark .uppy-Dashboard-note {
+    color: rgb(156, 163, 175) !important;
+  }
+
+  /* Style du bouton browse */
+  .uppy-Dashboard-browse {
+    color: rgb(14, 165, 233) !important;
+  }
+
+  .uppy-Dashboard-browse:hover {
+    color: rgb(2, 132, 199) !important;
+  }
+
+  /* Progress bar */
+  .uppy-StatusBar-progress {
+    background-color: rgb(14, 165, 233) !important;
+  }
+
+  [x-cloak] { display: none !important; }
+</style>
+{% endblock %}

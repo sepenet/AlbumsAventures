@@ -1,0 +1,59 @@
+# Configuration des hooks pre-commit pour AlbumsAventures
+# Documentation : https://pre-commit.com/
+#
+# Installation locale :
+#   pip install pre-commit
+#   pre-commit install
+#
+# Lancer manuellement sur tous les fichiers :
+#   pre-commit run --all-files
+
+repos:
+  # ---------------------------------------------------------------------------
+  # Hooks de base (whitespace, fin de fichier, YAML, fichiers volumineux)
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+
+  # ---------------------------------------------------------------------------
+  # Ruff — linting Python (avec auto-fix)
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+
+  # ---------------------------------------------------------------------------
+  # Black — formatage Python
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+
+# ---------------------------------------------------------------------------
+# Hook optionnel : detect-secrets (à activer après création du baseline)
+#
+# Initialisation :
+#   pip install detect-secrets
+#   detect-secrets scan > .secrets.baseline
+#
+# Puis décommenter ci-dessous :
+# ---------------------------------------------------------------------------
+# - repo: https://github.com/Yelp/detect-secrets
+#   rev: v1.5.0
+#   hooks:
+#     - id: detect-secrets
+#       args: ["--baseline", ".secrets.baseline"]

@@ -1,0 +1,104 @@
+[project]
+name = "albums-aventures-be"
+version = "0.1.0"
+description = "Application de gestion d'albums photos et vidéos (FastAPI + Jinja2)."
+requires-python = ">=3.12"
+
+# ---------------------------------------------------------------------------
+# Ruff — linter Python rapide (remplace flake8, isort, pyupgrade, ...)
+# Documentation : https://docs.astral.sh/ruff/
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = [
+    "Scripts",
+    "Lib",
+    "Include",
+    "logs",
+    "frontend/static",
+    "tests/e2e",
+]
+
+[tool.ruff.lint]
+# Règles activées (volontairement modérées pour ne pas bloquer le projet existant) :
+# - E, W : erreurs et warnings pycodestyle
+# - F    : erreurs pyflakes (imports inutilisés, variables non utilisées, etc.)
+# - I    : tri des imports (équivalent isort)
+# - B    : bugbear (pièges courants)
+# - UP   : pyupgrade (syntaxe Python moderne)
+select = ["E", "W", "F", "I", "B", "UP"]
+
+# Règles ignorées :
+# - E501 : longueur de ligne (déjà géré par black)
+# - B008 : Depends() en valeur par défaut (pattern FastAPI normal)
+# Règles ignorées TEMPORAIREMENT (à corriger progressivement sur le code legacy) :
+# - E402 : imports pas en haut de fichier (refactor à faire dans be_auth.py, be_resizer.py, conftest.py)
+# - B904 : `raise X from err` manquant dans les except (à fixer en lot dans be_auth.py / be_resizer.py)
+# - B007 : variable de boucle non utilisée (1 cas dans be_resizer.py)
+# - E712 : `== False` vs `not x` (1 cas dans be_auth.py)
+ignore = ["E501", "B008", "E402", "B904", "B007", "E712"]
+
+[tool.ruff.lint.per-file-ignores]
+# Les __init__.py peuvent ré-exporter sans utilisation directe
+"__init__.py" = ["F401"]
+# Les tests peuvent utiliser des assertions et patterns spécifiques
+"tests/**/*.py" = ["B011"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["backend", "frontend", "utils"]
+
+# ---------------------------------------------------------------------------
+# Black — formateur Python opinioné (style unique, zéro débat)
+# Documentation : https://black.readthedocs.io/
+# ---------------------------------------------------------------------------
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+extend-exclude = '''
+/(
+    Scripts
+  | Lib
+  | Include
+  | logs
+  | frontend/static
+)/
+'''
+
+# ---------------------------------------------------------------------------
+# Pytest — framework de tests (migration depuis pytest.ini)
+# Documentation : https://docs.pytest.org/
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+markers = [
+    "e2e: Tests end-to-end avec navigateur (require: serveur actif)",
+]
+
+# ---------------------------------------------------------------------------
+# Coverage.py — mesure de la couverture de tests
+# Activer avec : pytest --cov=backend --cov=utils
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["backend", "utils", "frontend"]
+omit = [
+    "tests/*",
+    "Scripts/*",
+    "Lib/*",
+    "*/db/db_fill.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
