@@ -1,0 +1,46 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0
+rootdir: C:\Users\sepenet\GitHub_Dev\Perso\AlbumsAventures
+configfile: pyproject.toml
+plugins: anyio-4.12.0, asyncio-1.3.0, base-url-2.1.0, cov-7.1.0, playwright-0.7.2
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 66 items
+
+tests\test_albums.py .............                                       [ 19%]
+tests\test_auth.py ...............................                       [ 66%]
+tests\test_media_bridge.py .....                                         [ 74%]
+tests\test_upload.py ...........FF....                                   [100%]
+
+================================== FAILURES ===================================
+______ TestUploadTemplateContract.test_called_upload_methods_are_defined ______
+tests\test_upload.py:202: in test_called_upload_methods_are_defined
+    content = self._content()
+              ^^^^^^^^^^^^^^^
+tests\test_upload.py:198: in _content
+    return self._TEMPLATE.read_text(encoding="utf-8")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\Python314\Lib\pathlib\__init__.py:792: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\Python314\Lib\pathlib\__init__.py:776: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\sepenet\\GitHub_Dev\\Perso\\AlbumsAventures\\frontend\\templates\\album_upload.html'
+________ TestUploadTemplateContract.test_reliability_state_is_rendered ________
+tests\test_upload.py:213: in test_reliability_state_is_rendered
+    content = self._content()
+              ^^^^^^^^^^^^^^^
+tests\test_upload.py:198: in _content
+    return self._TEMPLATE.read_text(encoding="utf-8")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\Python314\Lib\pathlib\__init__.py:792: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Program Files\Python314\Lib\pathlib\__init__.py:776: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\sepenet\\GitHub_Dev\\Perso\\AlbumsAventures\\frontend\\templates\\album_upload.html'
+=========================== short test summary info ===========================
+FAILED tests/test_upload.py::TestUploadTemplateContract::test_called_upload_methods_are_defined
+FAILED tests/test_upload.py::TestUploadTemplateContract::test_reliability_state_is_rendered
+======================== 2 failed, 64 passed in 21.56s ========================

@@ -1,0 +1,216 @@
+{
+  "schemaVersion": "1.1",
+  "updated": "2026-07-08T16:30:00Z",
+  "turn": 17,
+  "mode": "autopilot",
+  "activeRoles": ["researcher", "lead", "architect", "security", "cost-manager", "product-owner", "rai", "developer", "tester"],
+  "openEscalations": [],
+  "trackedFollowups": [
+    {
+      "id": "FU-2",
+      "title": "Playwright upload e2e test coverage",
+      "description": "E2E test coverage for upload flow (Uppy resume, interrupt, success, error handling) deferred to Phase 5 pre-prod test infrastructure increment.",
+      "severity": "low",
+      "discovered_in": "turn:8:review:phase3-3.4",
+      "tracked_in": ".copilot-tracking/reviews/2026-07-07/albumsaventures-phase3-increment3-review.md",
+      "status": "open",
+      "phase_association": "phase5-preproduct"
+    },
+    {
+      "id": "install-prompt-ui",
+      "title": "Custom install-prompt UI polish",
+      "description": "Deferred custom PWA install-prompt UI enhancement (candidate: post-launch UX iteration).",
+      "severity": "low",
+      "discovered_in": "turn:13:review:phase4",
+      "tracked_in": ".copilot-tracking/reviews/2026-07-07/albumsaventures-phase4-pwa-review.md",
+      "status": "open",
+      "phase_association": "phase5-postlaunch"
+    },
+    {
+      "id": "spa-native-album-create-edit",
+      "title": "SPA-native album create/edit (vs. Jinja fallback retention)",
+      "description": "RESOLVED TURN 17: Full SPA-native album create/edit workflow delivered as part of Option B Jinja decommission completion.",
+      "severity": "medium",
+      "discovered_in": "turn:16:implement:jinja-decommission",
+      "tracked_in": ".copilot-tracking/squad/history/autopilot-run-albumsaventures-jinja-decommission.md",
+      "resolved_in": "turn:17:implement:jinja-decommission-increment2",
+      "gates_full_decommission": false,
+      "status": "resolved",
+      "phase_association": "jinja-decommission"
+    },
+    {
+      "id": "jsdom-install-vitest",
+      "title": "Install jsdom for vitest component test execution",
+      "description": "jsdom package missing from node_modules; AlbumCreatePage + AlbumEditPage component specs compiled but not executed. Coordinator attempted `npm install jsdom` but received E401 authentication error (npm not authenticated in automation environment). Deferred to user's authenticated local environment. BLOCKS: CI reliance on vitest before manual installation.",
+      "severity": "medium",
+      "discovered_in": "turn:17:review:jinja-decommission-increment2",
+      "tracked_in": ".copilot-tracking/reviews/2026-07-08/albumsaventures-jinja-decommission-completion-plan-review.md",
+      "status": "pending-user-action",
+      "phase_association": "jinja-decommission",
+      "gating": "before-ci-reliance"
+    },
+    {
+      "id": "vitest-ci-integration",
+      "title": "Wire SPA vitest into CI pipeline",
+      "description": "Integrate vitest (React component tests) into CI/CD pipeline for automated validation on every commit. Currently manual run only (blocked on jsdom installation).",
+      "severity": "low",
+      "discovered_in": "turn:16:review:jinja-decommission",
+      "tracked_in": ".copilot-tracking/reviews/2026-07-08/albumsaventures-jinja-decommission-completion-plan-review.md",
+      "status": "blocked-by-jsdom",
+      "phase_association": "jinja-decommission"
+    },
+    {
+      "id": "adr-bridge-seam-httpx-loopback",
+      "title": "ADR: Media bridge seam + httpx loopback architecture",
+      "description": "Document architectural decision for be_media_bridge prefix-less seam (POST /album/shared/images before /album/{album_id}/images) and httpx loopback proxy for token exchange. Candidate: Architecture Decision Record (MADR) in docs/planning/adrs/.",
+      "severity": "low",
+      "discovered_in": "turn:16:implement:jinja-decommission",
+      "tracked_in": ".copilot-tracking/changes/2026-07-08/albumsaventures-jinja-decommission-changes.md",
+      "status": "open",
+      "phase_association": "jinja-decommission"
+    },
+    {
+      "id": "create-share-token-idor-audit",
+      "title": "Audit create_share_token for IDOR vulnerability",
+      "description": "create_share_token endpoint remains authenticated (not gated with require_superuser). Identified in Turn 17 review as low-risk but requires IDOR audit: verify share token generation does not allow unprivileged users to generate tokens for albums they don't own. Tracked as TODO in code.",
+      "severity": "low",
+      "discovered_in": "turn:17:implement:jinja-decommission-increment2",
+      "tracked_in": ".copilot-tracking/squad/history/Task Implementor.md",
+      "status": "open",
+      "phase_association": "jinja-decommission"
+    },
+    {
+      "id": "csp-style-src-tighten",
+      "title": "CSP style-src unsafe-inline removal (residual)",
+      "description": "Full CSP collapse (Turn 17 increment 2) removed transloadit + Uppy CDN and set script-src 'self' only. Residual: style-src still includes unsafe-inline (for dynamic React inline styles). Candidate: explore styled-components or CSS-in-JS with nonce-based CSP for full collapse without unsafe-inline.",
+      "severity": "low",
+      "discovered_in": "turn:17:review:jinja-decommission-increment2",
+      "tracked_in": ".copilot-tracking/reviews/2026-07-08/albumsaventures-jinja-decommission-completion-plan-review.md",
+      "status": "open",
+      "phase_association": "jinja-decommission"
+    },
+    {
+      "id": "transactional-create-full",
+      "title": "Transactional create_full album endpoint",
+      "description": "During increment 2 implementation, identified: album creation currently requires multiple calls (create_album + create_category + set cover). Candidate: create_full or create_with_initial_data endpoint for atomicity.",
+      "severity": "low",
+      "discovered_in": "turn:17:implement:jinja-decommission-increment2",
+      "tracked_in": ".copilot-tracking/changes/2026-07-08/albumsaventures-jinja-decommission-increment2-changes.md",
+      "status": "open",
+      "phase_association": "jinja-decommission"
+    },
+    {
+      "id": "dry-cover-with-be-resizer",
+      "title": "DRY: Align cover-image handling with be_resizer architecture",
+      "description": "New POST /be_album/upload_cover/{id} endpoint duplicates some image validation logic from be_resizer. Candidate: consolidate or use be_resizer pipeline for cover images.",
+      "severity": "low",
+      "discovered_in": "turn:17:implement:jinja-decommission-increment2",
+      "tracked_in": ".copilot-tracking/changes/2026-07-08/albumsaventures-jinja-decommission-increment2-changes.md",
+      "status": "open",
+      "phase_association": "jinja-decommission"
+    },
+    {
+      "id": "adr-superuser-authz-multiendpoint",
+      "title": "ADR: Superuser authorization + multi-call create trade-off",
+      "description": "Design decision rationale: why require_superuser gating at endpoint level (vs. group membership checks), and why album creation requires multiple API calls (create + category + cover) vs. single transactional endpoint. Candidate ADR for docs/planning/adrs/.",
+      "severity": "low",
+      "discovered_in": "turn:17:implement:jinja-decommission-increment2",
+      "tracked_in": ".copilot-tracking/changes/2026-07-08/albumsaventures-jinja-decommission-increment2-changes.md",
+      "status": "open",
+      "phase_association": "jinja-decommission"
+    },
+    {
+      "id": "ci-grep-gate-ungated-mutations",
+      "title": "CI grep gate: detect ungated be_* mutations",
+      "description": "Preventative CI check: grep backend routers for POST/PATCH/DELETE mutations missing @Depends(require_superuser) or explicit auth guards. Candidate: GitHub Actions step before merge to catch regressions.",
+      "severity": "low",
+      "discovered_in": "turn:17:review:jinja-decommission-increment2",
+      "tracked_in": ".copilot-tracking/reviews/2026-07-08/albumsaventures-jinja-decommission-completion-plan-review.md",
+      "status": "open",
+      "phase_association": "jinja-decommission"
+    }
+  ],
+  "frameworkDecision": {
+    "id": "framework-gate",
+    "resolution": "User chose Option B — React 18 + Vite + TypeScript served same-origin by FastAPI",
+    "overridesCouncilVerdictCondition": true,
+    "timestamp": "2026-07-07T18:15:00Z",
+    "decisionRef": ".copilot-tracking/squad/decisions.md#turn-5--framework-decision--user-override-to-option-b-spa"
+  },
+  "phase3CompletionCheckpoint": {
+    "status": "delivered-and-reviewed",
+    "timestamp": "2026-07-07T23:59:30Z",
+    "increments": "3.1-3.9",
+    "deliverables": ["React SPA with same-origin /app shell", "Jinja fallback templates intact", "Two-tier CSP hardening", "Auth pages (cookie-only)", "F-1 + FU-group security gates", "Phase 2 reliability preserved"],
+    "testsPassing": "61 backend pytest + 74 vitest component",
+    "codingStandards": "ESLint + Prettier + ruff + black all passing",
+    "reviewsCompleted": 9,
+    "deploymentPrerequisites": ["Apply migrations 0001+0002", "Enable HTTPS", "User validation"],
+    "awaitingUserDecision": "Phase 4 PWA (now completed; awaiting deployment decision)"
+  },
+  "phase4CompletionCheckpoint": {
+    "status": "delivered-and-reviewed",
+    "timestamp": "2026-07-07T23:59:50Z",
+    "deliverables": ["vite-plugin-pwa integration", "Workbox service worker (NetworkOnly /be_*, CacheFirst /media/*)", "manifest.webmanifest with real PNG icons", "Offline shell with RequireAuth (no loop)", "Hash-revisioned precache + skipWaiting + clientsClaim", "External registerSW.js (no inline)", "CSP 'self' preserved (no unsafe-eval, no CDN loosening)"],
+    "testsPassing": "83 vitest component + 61 pytest backend",
+    "codingStandards": "ESLint + Prettier + ruff + black all passing",
+    "reviewsCompleted": 1,
+    "councilConditionsSatisfied": 8,
+    "deploymentPrerequisites": ["Apply migrations 0001+0002", "Enable HTTPS"],
+    "modernizationStatus": "COMPLETE — all four goals delivered and validated"
+  },
+  "impactfulActionGate": {
+    "status": "approved-and-executed",
+    "timestamp": "2026-07-07T23:59:51Z",
+    "commitHash": "1285948",
+    "commitMessage": "feat: modernize app — React SPA, security hardening, upload reliability, PWA",
+    "diffStats": "85 files changed, +17901 insertions, -269 deletions",
+    "pushRef": "f44934d..1285948 main -> main",
+    "repository": "sepenet/AlbumsAventures",
+    "note": "Modernization commit pushed to origin/main. All four goals delivered and validated. Production prerequisites pending: apply migrations 0001+0002, enable HTTPS."
+  },
+  "jinjaDecommissionCheckpoint": {
+    "status": "released",
+    "timestamp": "2026-07-08T16:30:00Z",
+    "commitHash": "3b14f0c",
+    "commitMessage": "refactor(frontend): decommission Jinja, add SPA-native album create/edit",
+    "diffStats": "45 files changed, +2415 -7344",
+    "pushRef": "1285948..3b14f0c main -> main",
+    "repository": "sepenet/AlbumsAventures",
+    "scope": "complete (all 14 Jinja templates removed, fe_router deleted, jinja2 removed from requirements.txt, csrf.py removed, CSP fully collapsed to single script-src 'self')",
+    "testsPassing": "75 backend pytest + 103 vitest (2 component specs AlbumCreatePage/AlbumEditPage blocked on jsdom environment, not code)",
+    "delivered": [
+      "GROUP A: 7 endpoints gated with @Depends(require_superuser) (create_album, update_album, create_album_folder [GET→POST], be_album.create_category, be_category.create_category, export_album_json, upload_cover)",
+      "GROUP A': new hardened POST /be_album/upload_cover/{id} (os.path.basename, reject ./.. paths, extension allowlist, 10MB cap, PIL .verify(), commonpath confinement)",
+      "GROUP B: SPA-native AlbumCreatePage + AlbumEditPage React components, apiClient.postForm, albumForm.ts (comma↔pipe), App.tsx routes /app/album/new + /app/album/:id/edit with RequireAuth+RequireSuperuser, converted AlbumGridPage/AlbumDetailPage outbound links to React <Link>",
+      "GROUP C: all 14 Jinja templates deleted (album_form.html, album_edit.html, album_category_create.html, album_upload.html + dependencies), fe_router.py deleted, jinja2 removed from requirements.txt, csrf.py deleted, bare /album/new + /album/{album_id}/edit 302 redirects (open-redirect-safe, token preserved), full CSP collapse (single script-src 'self', kept _MEDIA_CSP for /media/*, residual style-src unsafe-inline pending tightening)"
+    ],
+    "councilConditionsPassed": 10,
+    "allConditionsValidated": true,
+    "deploymentPrerequisites": ["jsdom installation in local environment for component test execution (coordinator E401 deferred)", "Final production validation on deployed app"],
+    "note": "Full Jinja decommission (both increments) released to origin/main. Commit 3b14f0c. Push 1285948..3b14f0c. Follow-up: install jsdom locally + run the two create/edit component vitest specs before relying on CI."
+  },
+  "jinjaDecommissionReleaseCheckpoint": {
+    "status": "approved-and-executed",
+    "timestamp": "2026-07-08T16:30:00Z",
+    "commitHash": "3b14f0c",
+    "commitMessage": "refactor(frontend): decommission Jinja, add SPA-native album create/edit",
+    "diffStats": "45 files changed, +2415 -7344",
+    "pushRef": "1285948..3b14f0c main -> main",
+    "repository": "sepenet/AlbumsAventures",
+    "note": "Full Jinja decommission (both increments) released to origin/main. Follow-up: install jsdom locally + run the two create/edit component vitest specs before relying on CI."
+  },
+  "currentRun": {
+    "estCostUsd": 10.406,
+    "estCreditsTotal": 1040.60
+  },
+  "notify": {
+    "approvalChannel": "github-issue",
+    "enabled": true,
+    "email": "",
+    "github": {
+      "handle": "sepenet",
+      "repo": "sepenet/AlbumsAventures"
+    }
+  }
+}

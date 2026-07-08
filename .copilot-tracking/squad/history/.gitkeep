@@ -1,0 +1,3 @@
+# Squad dispatch history directory
+# Per-agent history files are created in this directory as dispatches are recorded.
+# Each file (e.g., history/Task Researcher.md) is append-only and tracks that agent's dispatch records.
