@@ -5,6 +5,8 @@ from logging.handlers import RotatingFileHandler
 
 from utils.secret_store import SecretStore
 
+logger = logging.getLogger(__name__)
+
 ##############################################
 # Configuration globale
 # Ce fichier contient les variables globales utilisées dans l'application
@@ -172,8 +174,46 @@ class app_config:
 
     @classmethod
     def cookie_samesite(cls) -> str:
-        """Politique SameSite du cookie d'authentification (défaut : lax)."""
-        return SecretStore.get("COOKIE_SAMESITE", "lax").lower().strip()
+        """Politique SameSite du cookie d'authentification (défaut : lax).
+
+        SÉCURITÉ : depuis le décommissionnement de la couche CSRF Jinja
+        (``utils/csrf.py``), la défense CSRF des endpoints JSON repose ENTIÈREMENT
+        sur l'attribut SameSite du cookie d'authentification. ``none`` neutralise
+        cette protection ; il est donc rejeté ici et ramené au défaut sûr ``lax``
+        avec un avertissement. Seules les valeurs ``lax``/``strict`` sont admises.
+        """
+        value = SecretStore.get("COOKIE_SAMESITE", "lax").lower().strip()
+        if value not in ("lax", "strict"):
+            logger.warning(
+                "COOKIE_SAMESITE=%r invalide (la protection CSRF repose sur SameSite) : "
+                "repli sur 'lax'. Valeurs autorisées : lax, strict.",
+                value,
+            )
+            return "lax"
+        return value
+
+    @classmethod
+    def assert_secure_cookie_config(cls) -> None:
+        """Assertion de démarrage : configuration de cookie sûre en production.
+
+        En production, la CSRF reposant sur SameSite, on exige :
+          • ``COOKIE_SAMESITE`` ∈ {lax, strict} (jamais ``none``) ;
+          • ``cookie_secure()`` vrai (cookies ``Secure``, HTTPS uniquement).
+        Toute violation lève une ``RuntimeError`` pour échouer vite au démarrage.
+        """
+        if not cls.is_production():
+            return
+        samesite = SecretStore.get("COOKIE_SAMESITE", "lax").lower().strip()
+        if samesite not in ("lax", "strict"):
+            raise RuntimeError(
+                f"Configuration cookie non sûre : COOKIE_SAMESITE={samesite!r} interdit en production "
+                "(la protection CSRF repose sur SameSite). Utilisez 'lax' ou 'strict'."
+            )
+        if not cls.cookie_secure():
+            raise RuntimeError(
+                "Configuration cookie non sûre : cookie_secure() doit être vrai en production "
+                "(cookies Secure/HTTPS). Vérifiez COOKIE_SECURE / ENVIRONMENT."
+            )
 
     @classmethod
     def cors_allowed_origins(cls) -> list[str]:

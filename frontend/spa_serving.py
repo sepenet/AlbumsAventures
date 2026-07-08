@@ -19,11 +19,11 @@ needs it.
 Route-shadowing guarantee
 -------------------------
 Serving is scoped to the ``/app`` prefix and is registered AFTER every
-``be_*``/``fe_router`` include and after the ``/static``, ``/images`` and
+``be_*``/``fe_redirects`` include and after the ``/static``, ``/images`` and
 ``/thumbnails`` mounts. It therefore CANNOT intercept ``/be_*`` API calls,
 ``/be_resizer/tus/`` uploads, or the media mounts — those live outside ``/app``.
-Un-migrated Jinja2 pages keep serving from their own routes (incremental
-strangler migration).
+The legacy Jinja2 view layer has been fully decommissioned; bare legacy paths
+now 302-redirect into ``/app`` via ``frontend/routers/fe_redirects.py``.
 
 PWA build artifacts (Phase 4)
 -----------------------------

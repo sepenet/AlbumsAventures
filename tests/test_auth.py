@@ -408,22 +408,32 @@ class TestSecurityHeaders:
             tokens = directive.strip().split()
             assert "*" not in tokens, f"source large '*' interdite dans : {directive.strip()!r}"
 
-    def test_jinja_csp_cdn_allowances_are_host_pinned(self, client):
-        """Les CDN encore requis par le repli Jinja sont épinglés à un hôte https précis.
+    def test_csp_has_no_cdn_after_jinja_decommission(self, client):
+        """Après le décommissionnement Jinja, AUCUN CDN ne figure dans la CSP.
 
-        Aucun schéma large (``https:``) ni wildcard d'hôte (``https://*.``) n'est toléré.
+        La politique applicative est désormais UNIQUE et durcie sur toute la surface
+        (SPA + API) : ``script-src 'self'`` seul, sans aucun hôte CDN. Seul
+        ``style-src`` conserve le ``'unsafe-inline'`` résiduel (styles runtime).
         """
         csp = client.get("/be_auth/me").headers["Content-Security-Policy"]
 
-        # Les 3 CDN restants doivent apparaître épinglés à leur hôte exact.
-        assert "https://cdn.tailwindcss.com" in csp
-        assert "https://unpkg.com" in csp
-        assert "https://releases.transloadit.com" in csp
+        # Les CDN de l'ancienne couche Jinja ont disparu de la CSP.
+        assert "https://cdn.tailwindcss.com" not in csp
+        assert "https://unpkg.com" not in csp
+        assert "https://releases.transloadit.com" not in csp
+
+        # script-src est durci à 'self' seul (aucun CDN, aucun inline).
+        script_src = next(
+            (d.strip() for d in csp.split(";") if d.strip().startswith("script-src")),
+            "",
+        )
+        assert script_src == "script-src 'self'", f"script-src non durci : {script_src!r}"
+
+        # Le 'unsafe-inline' résiduel subsiste UNIQUEMENT sur style-src.
+        assert "'unsafe-inline'" in csp
         # Pas d'allocation de schéma large ni de wildcard d'hôte.
         assert "https:*" not in csp
         assert "https://*" not in csp
-        # Le repli Jinja conserve (temporairement) 'unsafe-inline' pour script-src.
-        assert "'unsafe-inline'" in csp
 
     def test_spa_csp_is_tightened_same_origin_only(self, client):
         """La surface SPA ``/app`` reçoit la CSP DURCIE : script-src 'self', aucun CDN.

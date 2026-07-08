@@ -3,9 +3,7 @@ Tests fonctionnels pour l'upload d'images/vidéos (be_resizer).
 Teste les validations de taille et d'accès album.
 """
 
-import re
 from io import BytesIO
-from pathlib import Path
 
 from fastapi import status
 
@@ -178,43 +176,6 @@ class TestDeleteImage:
         response = client.delete("/be_resizer/delete_image/99999/image.jpg", cookies=auth_headers["cookies"])
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
-
-
-class TestUploadTemplateContract:
-    """Garde-fou léger contre la régression D1 (Phase 2).
-
-    Le crash « called-but-undefined » (une méthode appelée dans ``init()`` mais
-    jamais définie, cassant l'init Uppy sur toute la page) n'est pas détectable
-    par la suite backend, qui n'exécute pas le JavaScript du template. Ce test
-    statique vérifie, pour chaque méthode appelée sur l'objet Alpine, qu'une
-    définition correspondante existe bien. La couverture d'exécution réelle
-    (upload/reprise/statut) relève d'un test e2e Playwright — reporté à la
-    Phase 4 (durcissement e2e).
-    """
-
-    _TEMPLATE = Path(__file__).resolve().parent.parent / "frontend" / "templates" / "album_upload.html"
-
-    def _content(self):
-        return self._TEMPLATE.read_text(encoding="utf-8")
-
-    def test_called_upload_methods_are_defined(self):
-        """Chaque méthode appelée via self.<m>() doit avoir une définition."""
-        content = self._content()
-        # Méthodes invoquées sur l'objet uploadManager() (dont selectChunkSize,
-        # appelée dans init() — la cause exacte du crash D1).
-        methodes_appelees = {"selectChunkSize", "computeCompressionMetric", "startProcessingStatusPolling"}
-        for nom in methodes_appelees:
-            assert f"self.{nom}(" in content, f"Appel self.{nom}() introuvable dans le template"
-            # Définition en forme abrégée d'objet : « <nom>( ... ) { » en début de ligne.
-            assert re.search(rf"\n\s*{nom}\s*\(", content), f"Définition de {nom}() manquante (régression D1)"
-
-    def test_reliability_state_is_rendered(self):
-        """L'état de fiabilité (D4) doit être rendu dans le markup, pas seulement déclaré."""
-        content = self._content()
-        # La métrique de compression et le suivi durable doivent être surfacés.
-        assert "metrics.compressedSavedBytes" in content
-        assert "processingSummary" in content
-        assert "processingFiles" in content
 
 
 class TestCreateThumbnailsSecurity:

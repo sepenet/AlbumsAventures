@@ -34,8 +34,17 @@ from backend.db.db_fill import (
     db_users_fill,
     db_users_groups_fill,
 )
-from backend.routers import be_album, be_auth, be_category, be_formatter, be_group, be_resizer, be_user
-from frontend.routers import fe_router
+from backend.routers import (
+    be_album,
+    be_auth,
+    be_category,
+    be_formatter,
+    be_group,
+    be_media_bridge,
+    be_resizer,
+    be_user,
+)
+from frontend.routers import fe_redirects
 from frontend.spa_serving import configure_spa
 from utils.config import image, logging_config
 from utils.security import configure_cors, configure_security
@@ -59,6 +68,13 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # initialisation de la base de données, creation des tables si pas existantes et connexion à la base de données
     logger.info("Démarrage de l'application AlbumsAventures")
+
+    # Assertion de démarrage : en production, la protection CSRF reposant désormais
+    # sur SameSite (couche CSRF Jinja décommissionnée), on exige COOKIE_SAMESITE
+    # ∈ {lax, strict} et des cookies Secure. Échec rapide sinon.
+    from utils.config import app_config
+
+    app_config.assert_secure_cookie_config()
 
     # si OS est windows, on utilise la base de données SQLite, et on la cré et efface à chaque fois
     if os.name == "nt":
@@ -115,7 +131,14 @@ app.include_router(be_formatter.router)
 app.include_router(be_group.router)
 app.include_router(be_resizer.router)
 app.include_router(be_resizer.tus_router)  # endpoints TUS resumable (/be_resizer/tus)
-app.include_router(fe_router.router)
+# Seam de préservation d'URL : héberge les 2 endpoints média appelés par la SPA
+# à leurs URLs BARE (/album/{id}/images, /album/shared/images). Voir
+# backend/routers/be_media_bridge.py.
+app.include_router(be_media_bridge.router)
+# Shims 302 : redirigent les routes Jinja retirées (index/login/album create·edit/
+# rando…) vers leurs équivalents SPA /app. La couche Jinja (fe_router + templates)
+# est entièrement décommissionnée.
+app.include_router(fe_redirects.router)
 
 # on monte le dossier static pour servir les fichiers statiques (images, css, js, etc.)
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")

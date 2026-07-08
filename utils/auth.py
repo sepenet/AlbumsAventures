@@ -27,7 +27,7 @@ async def verify_authentication(request: Request) -> dict | None:
     :return: Données utilisateur si authentifié, None sinon
     """
     # Imports différés : évite tout cycle d'import au chargement du module
-    # (``utils.auth`` est importé par ``fe_router``) et ne charge le routeur
+    # (``utils.auth`` est importé par ``be_media_bridge``) et ne charge le routeur
     # backend que lorsque la garde est effectivement appelée.
     from backend.db import crud
     from backend.db.db_connect import SessionLocal
@@ -54,8 +54,8 @@ async def verify_authentication(request: Request) -> dict | None:
             return None
 
         # Forme identique à ``schemas.UserAdmin`` renvoyée par ``/me`` : les
-        # appelants (require_auth / require_superuser / templates Jinja) lisent
-        # ``id``/``is_superuser`` et les infos de profil.
+        # appelants (``require_auth``, garde média du bridge) lisent ``id``/
+        # ``is_superuser`` et les infos de profil.
         return {
             "id": user.id,
             "firstname": user.firstname,
@@ -79,20 +79,3 @@ async def require_auth(request: Request) -> tuple[bool, dict | None]:
     """
     user = await verify_authentication(request)
     return (user is not None, user)
-
-
-async def require_superuser(request: Request) -> tuple[bool, dict | None]:
-    """Vérifie que l'utilisateur est authentifié ET superuser
-
-    :param request: Requête FastAPI
-    :return: Tuple (is_superuser, user_data)
-    """
-    user = await verify_authentication(request)
-
-    if user is None:
-        return (False, None)
-
-    if not user.get("is_superuser", False):
-        return (False, user)
-
-    return (True, user)

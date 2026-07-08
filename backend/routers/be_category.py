@@ -4,7 +4,7 @@ from ..db import crud, schemas
 
 # from sqlalchemy.orm import Session
 from ..db.db_connect import db_dependency
-from .be_auth import get_current_user
+from .be_auth import get_current_user, require_superuser
 
 router = APIRouter(prefix="/be_category", tags=["backend_category"], dependencies=[Depends(get_current_user)])
 
@@ -33,7 +33,8 @@ def get_category_id_by_category(category: str, db: db_dependency):
 
 
 # créer une nouvelle catégorie
-@router.post("/create_category/", response_model=schemas.Category)
+# Réservé aux superusers (parité avec l'ancien gate Jinja require_superuser).
+@router.post("/create_category/", response_model=schemas.Category, dependencies=[Depends(require_superuser)])
 def create_category(db: db_dependency, category: schemas.CategoryCreate):
     """
     Fonction pour créer une nouvelle catégorie.

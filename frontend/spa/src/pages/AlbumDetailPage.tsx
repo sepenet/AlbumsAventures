@@ -170,15 +170,15 @@ export function AlbumDetailPage() {
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
               {isSuperuser ? (
                 <>
-                  {/* Edit — links to the existing (still-Jinja) edit page; native
-                      SPA edit lands in a later admin increment. */}
-                  <a
-                    href={`/album/${album.id}/edit`}
+                  {/* Edit — SPA-native album edit page (`/app/album/{id}/edit`,
+                      superuser-only). Replaces the retired Jinja `album_edit.html`. */}
+                  <Link
+                    to={`/album/${album.id}/edit`}
                     className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 font-medium text-white shadow-md transition-colors hover:bg-amber-600"
                   >
                     <ActionIcon path="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                     Modifier
-                  </a>
+                  </Link>
 
                   {/* Share / associate — TODO(sub-phase 3.7): native shared-album
                       + associate flow. Links to the existing Jinja detail page

@@ -60,47 +60,26 @@ CORS_ALLOWED_HEADERS = [
 ]
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Content Security Policy — DEUX politiques (durcissement Phase 3.9).
+# Content Security Policy — politique UNIQUE durcie (Jinja décommissionné).
 #
-# Contexte « strangler » : la migration SPA est incrémentale. Chaque page existe
-# en DEUX versions servies simultanément :
-#   • une version React servie sous le préfixe /app (assets bundlés same-origin) ;
-#   • une version Jinja2 de repli qui charge encore des assets CDN + <script> inline.
-# On ne peut donc PAS retirer globalement les CDN ni 'unsafe-inline' sans casser le
-# repli Jinja. La CSP est scindée par surface :
+# La couche de repli Jinja2 (base.html + CDN + <script> inline) a été entièrement
+# retirée : toutes les pages sont servies par la SPA React same-origin sous /app
+# (assets bundlés hachés, aucun <script>/<style> inline). Une seule politique
+# applicative durcie s'applique donc à toute la surface HTTP (SPA + API) :
 #
-#   1. Politique JINJA (défaut, hors /app et hors média) — INCHANGÉE :
-#      conserve les 3 CDN (épinglés à un hôte précis) + 'unsafe-inline' car
-#      base.html/album_*.html en dépendent encore (voir audit ci-dessous).
-#   2. Politique SPA (préfixe /app) — DURCIE :
-#      script-src 'self' UNIQUEMENT (aucun CDN, plus de 'unsafe-inline'), car le
-#      shell buildé (dist/index.html) ne référence que des assets same-origin
-#      hachés (/app/assets/*.js, *.css) et ne contient AUCUN <script>/<style>
-#      inline. style-src conserve 'unsafe-inline' pour les styles injectés au
-#      runtime par des libs bundlées (ex. tableau de bord Uppy) — retrait différé.
+#   • script-src 'self' UNIQUEMENT — aucun CDN, aucun 'unsafe-inline'/'unsafe-eval'.
+#   • style-src 'self' 'unsafe-inline' — 'unsafe-inline' RÉSIDUEL, conservé pour
+#     les styles injectés au runtime par des libs bundlées (ex. tableau de bord
+#     Uppy). Retrait différé (hash/nonce des styles runtime).
 #
 # INVARIANTS (vérifiés par tests/test_auth.py::TestSecurityHeaders) :
-#   • aucun 'unsafe-eval' ; aucune source large '*' ; CDN épinglés à un hôte https.
+#   • aucun 'unsafe-eval' ; aucune source large '*' ; aucun CDN.
 #
-# Audit CDN (état 3.9) — chaque origine reste requise par une page Jinja vivante :
-#   • https://cdn.tailwindcss.com     -> base.html (toutes les pages Jinja).
-#   • https://unpkg.com               -> Alpine (base.html) + PhotoSwipe/Masonry/
-#                                        imagesLoaded (album_detail.html).
-#   • https://releases.transloadit.com-> Uppy v3 (album_upload.html).
-#   Retrait total (CDN + 'unsafe-inline' côté Jinja) = CONDITIONNÉ au démantèlement
-#   des templates Jinja (fin du strangler) ; suivi comme dette Phase 3.9 différée.
+# Les ressources média servies statiquement (/images, /thumbnails) gardent leur
+# politique bac à sable distincte (_MEDIA_CSP), inchangée.
 # ──────────────────────────────────────────────────────────────────────────────
 
-# Origines CDN épinglées, encore requises par les pages Jinja de repli.
-_CDN_TAILWIND = "https://cdn.tailwindcss.com"  # base.html (toutes pages Jinja)
-_CDN_UNPKG = "https://unpkg.com"  # Alpine + PhotoSwipe/Masonry/imagesLoaded (Jinja)
-_CDN_UPPY = "https://releases.transloadit.com"  # Uppy v3 (album_upload.html Jinja)
-
-# Préfixe d'URL de la SPA (miroir de frontend/spa_serving.SPA_URL_PREFIX). Défini
-# localement pour éviter un couplage d'import entre utils/ et frontend/.
-_SPA_PATH_PREFIX = "/app"
-
-# Directives partagées par les deux politiques (indépendantes de script/style).
+# Directives partagées (indépendantes de script/style).
 _CSP_SHARED: dict[str, list[str]] = {
     "default-src": ["'self'"],
     # Images/vignettes servies en local + previews Uppy (blob:) + data: (icônes).
@@ -120,21 +99,14 @@ _CSP_SHARED: dict[str, list[str]] = {
     "upgrade-insecure-requests": [],
 }
 
-# Politique JINJA (repli strangler) : CDN épinglés + 'unsafe-inline' encore requis.
-# À RETIRER au démantèlement des templates Jinja (dette Phase 3.9 différée).
-_CSP_DIRECTIVES_JINJA: dict[str, list[str]] = {
-    **_CSP_SHARED,
-    "script-src": ["'self'", "'unsafe-inline'", _CDN_TAILWIND, _CDN_UNPKG, _CDN_UPPY],
-    "style-src": ["'self'", "'unsafe-inline'", _CDN_TAILWIND, _CDN_UNPKG, _CDN_UPPY],
-}
-
-# Politique SPA (/app) : same-origin uniquement, AUCUN CDN, plus de script inline.
-_CSP_DIRECTIVES_SPA: dict[str, list[str]] = {
+# Politique applicative UNIQUE (durcie) : same-origin, aucun CDN, aucun script
+# inline. 'unsafe-inline' n'est conservé que sur ``style-src`` (styles runtime des
+# libs bundlées ; retrait futur via hash/nonce).
+_CSP_DIRECTIVES: dict[str, list[str]] = {
     **_CSP_SHARED,
     # Shell buildé = uniquement des <script>/<link> same-origin hachés -> 'self'.
     "script-src": ["'self'"],
-    # 'unsafe-inline' conservé UNIQUEMENT pour les styles injectés au runtime par
-    # des libs bundlées (ex. Uppy). Retrait différé (hash/nonce des styles runtime).
+    # 'unsafe-inline' RÉSIDUEL, uniquement pour les styles injectés au runtime.
     "style-src": ["'self'", "'unsafe-inline'"],
 }
 
@@ -153,7 +125,7 @@ _MEDIA_PATH_PREFIXES = ("/images", "/thumbnails")
 def _build_csp(directives: dict[str, list[str]], include_upgrade_insecure: bool) -> str:
     """Construit la chaîne CSP à partir d'un jeu de directives.
 
-    :param directives: politique à sérialiser (``_CSP_DIRECTIVES_JINJA`` ou ``_SPA``).
+    :param directives: politique à sérialiser (``_CSP_DIRECTIVES``).
     :param include_upgrade_insecure: ajoute ``upgrade-insecure-requests`` (prod HTTPS).
     """
     parties: list[str] = []
@@ -170,13 +142,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Ajoute les en-têtes de sécurité sur toutes les réponses.
 
     Applique une CSP, ``X-Content-Type-Options: nosniff``, ``X-Frame-Options``,
-    ``Referrer-Policy`` et ``Permissions-Policy``. La CSP est choisie selon la
-    surface : politique DURCIE (``script-src 'self'``, aucun CDN) pour la SPA
-    ``/app``, politique de repli (CDN épinglés + ``'unsafe-inline'``) pour les
-    pages Jinja/API tant que le strangler est actif. En production, ajoute HSTS
-    et ``upgrade-insecure-requests``. Pour les mounts média, remplace la CSP par
-    une politique bac à sable et force ``Content-Disposition: attachment`` sur
-    les fichiers scriptables.
+    ``Referrer-Policy`` et ``Permissions-Policy``. Une politique CSP UNIQUE durcie
+    (``script-src 'self'``, aucun CDN) s'applique à toute la surface applicative
+    (SPA ``/app`` + API) depuis le décommissionnement de la couche Jinja. En
+    production, ajoute HSTS et ``upgrade-insecure-requests``. Pour les mounts
+    média, remplace la CSP par une politique bac à sable et force
+    ``Content-Disposition: attachment`` sur les fichiers scriptables.
     """
 
     async def dispatch(self, request: Request, call_next):
@@ -208,15 +179,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 # SVG/HTML : jamais rendus en top-level -> téléchargement forcé.
                 response.headers["Content-Disposition"] = "attachment"
         else:
-            # CSP applicative : politique DURCIE pour la SPA (/app), politique de
-            # repli (CDN + inline) pour les pages Jinja et l'API. On distingue par
-            # préfixe d'URL afin d'appliquer la CSP la plus stricte possible à /app
-            # sans casser le repli Jinja encore dépendant des CDN.
-            est_spa = chemin == _SPA_PATH_PREFIX or chemin.startswith(f"{_SPA_PATH_PREFIX}/")
-            directives = _CSP_DIRECTIVES_SPA if est_spa else _CSP_DIRECTIVES_JINJA
+            # CSP applicative UNIQUE (durcie) : même politique same-origin pour la
+            # SPA (/app) et l'API. La couche Jinja (CDN + inline) est retirée.
             response.headers.setdefault(
                 "Content-Security-Policy",
-                _build_csp(directives, include_upgrade_insecure=is_prod),
+                _build_csp(_CSP_DIRECTIVES, include_upgrade_insecure=is_prod),
             )
 
         return response

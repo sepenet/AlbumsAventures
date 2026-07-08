@@ -140,13 +140,13 @@ export function AlbumGridPage() {
           />
         </div>
         {user?.is_superuser ? (
-          <a
-            href="/album/new"
+          <Link
+            to="/album/new"
             className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-sky-600 px-5 py-3 font-medium text-white transition-colors hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2"
           >
             <span className="hidden sm:inline">Créer un album</span>
             <span className="sm:hidden">Créer</span>
-          </a>
+          </Link>
         ) : null}
       </div>
 

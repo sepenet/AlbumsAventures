@@ -5,7 +5,9 @@ import { RequireAuth } from "./auth/RequireAuth";
 import { RequireSuperuser } from "./auth/RequireSuperuser";
 import { Layout } from "./components/Layout";
 import { AdminPage } from "./pages/AdminPage";
+import { AlbumCreatePage } from "./pages/AlbumCreatePage";
 import { AlbumDetailPage } from "./pages/AlbumDetailPage";
+import { AlbumEditPage } from "./pages/AlbumEditPage";
 import { AlbumGridPage } from "./pages/AlbumGridPage";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -93,6 +95,37 @@ export function App() {
             <RequireSuperuser>
               <Layout>
                 <AdminPage />
+              </Layout>
+            </RequireSuperuser>
+          </RequireAuth>
+        }
+      />
+      {/* SPA-native album create/edit (superuser-only) — replace the retired
+          Jinja `album_form.html` / `album_edit.html`. Guarded exactly like
+          `/admin`: RequireSuperuser redirects non-admins to the grid and the
+          be_album mutation endpoints re-check `require_superuser` server-side.
+          `/album/new` is declared BEFORE `/album/:albumId/edit` so the literal
+          segment is matched first. Deep-linkable and refresh-safe via the
+          FastAPI SPA fallback. */}
+      <Route
+        path="/album/new"
+        element={
+          <RequireAuth>
+            <RequireSuperuser>
+              <Layout>
+                <AlbumCreatePage />
+              </Layout>
+            </RequireSuperuser>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/album/:albumId/edit"
+        element={
+          <RequireAuth>
+            <RequireSuperuser>
+              <Layout>
+                <AlbumEditPage />
               </Layout>
             </RequireSuperuser>
           </RequireAuth>

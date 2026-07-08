@@ -128,4 +128,12 @@ export const api = {
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
   del: <T>(path: string): Promise<T> => request<T>(path, { method: "DELETE" }),
+  /**
+   * Multipart POST helper for file uploads (e.g. album cover). Sends a
+   * `FormData` body: NO explicit `Content-Type` is set so the browser adds the
+   * multipart boundary itself. Like the other mutations it rides the same-origin
+   * session cookie and echoes the `X-CSRF-Token` header via the shared `request`.
+   */
+  postForm: <T>(path: string, formData: FormData): Promise<T> =>
+    request<T>(path, { method: "POST", body: formData }),
 };

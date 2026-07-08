@@ -1,7 +1,7 @@
 [project]
 name = "albums-aventures-be"
 version = "0.1.0"
-description = "Application de gestion d'albums photos et vidéos (FastAPI + Jinja2)."
+description = "Application de gestion d'albums photos et vidéos (FastAPI + React SPA)."
 requires-python = ">=3.12"
 
 # ---------------------------------------------------------------------------

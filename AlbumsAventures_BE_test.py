@@ -15,8 +15,17 @@ from utils.secret_store import SecretStore
 
 SecretStore.init()
 
-from backend.routers import be_album, be_auth, be_category, be_formatter, be_group, be_resizer, be_user
-from frontend.routers import fe_router
+from backend.routers import (
+    be_album,
+    be_auth,
+    be_category,
+    be_formatter,
+    be_group,
+    be_media_bridge,
+    be_resizer,
+    be_user,
+)
+from frontend.routers import fe_redirects
 from frontend.spa_serving import configure_spa
 from utils.security import configure_cors, configure_security
 
@@ -50,7 +59,11 @@ app.include_router(be_category.router)
 app.include_router(be_formatter.router)
 app.include_router(be_group.router)
 app.include_router(be_resizer.router)
-app.include_router(fe_router.router)
+# Seam de préservation d'URL (identique à la prod) : /album/{id}/images +
+# /album/shared/images à leurs URLs bare.
+app.include_router(be_media_bridge.router)
+# Shims 302 des routes Jinja retirées -> SPA /app (couche Jinja décommissionnée).
+app.include_router(fe_redirects.router)
 
 # Monter les fichiers statiques seulement s'ils existent
 if os.path.exists("frontend/static"):

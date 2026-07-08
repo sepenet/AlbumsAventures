@@ -6,12 +6,13 @@ mod = runpy.run_path("AlbumsAventures-BE.py")
 app = mod.get("app")
 
 client = TestClient(app)
-resp = client.get("/fe_router/login")
+# La couche Jinja est décommissionnée : la route bare /login redirige (302) vers
+# la page de connexion SPA /app/login (voir frontend/routers/fe_redirects.py).
+resp = client.get("/login", follow_redirects=False)
 print("STATUS", resp.status_code)
-text = resp.text
-print("Contains title?", "Bienvenue" in text)
-print("Contains forgot?", "Mot de passe oublié" in text)
-if resp.status_code == 200 and "Bienvenue" in text:
+location = resp.headers.get("location", "")
+print("LOCATION", location)
+if resp.status_code == 302 and location == "/app/login":
     print("TEST PASSED")
 else:
     print("TEST FAILED")
